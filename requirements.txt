@@ -1,0 +1,9 @@
+numpy
+scipy
+pandas
+requests
+plotly
+streamlit
+pyarrow
+python-dateutil
+pytest
