@@ -43,12 +43,15 @@ def load(live: bool) -> pd.DataFrame:
         from data.fetch_deribit import snapshot_chain, write_snapshot
 
         frame = snapshot_chain("BTC")
-        write_snapshot(frame)
+        write_snapshot(frame, currency="BTC")
         print(f"pulled a fresh chain: {len(frame)} instruments\n")
         return frame
-    files = sorted(glob.glob(str(ROOT / "data" / "raw" / "*.parquet")))
+    # Deliberately scoped to the BTC inverse book. data/raw/ now holds three
+    # contract families side by side (btc_, eth_, usdc_), and globbing
+    # *.parquet would blend inverse and linear quotes into one "chain".
+    files = sorted(glob.glob(str(ROOT / "data" / "raw" / "btc_chain_*.parquet")))
     if not files:
-        print("no snapshots in data/raw/; run with --live")
+        print("no BTC snapshots in data/raw/; run with --live")
         raise SystemExit(2)
     print(f"using {Path(files[-1]).name}\n")
     return pd.read_parquet(files[-1])

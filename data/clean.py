@@ -142,19 +142,42 @@ def add_forward_and_expiry(df: pd.DataFrame, as_of_ts=None) -> pd.DataFrame:
     return out[out["T"] > 0].reset_index(drop=True)
 
 
+LINEAR_QUOTE_CURRENCIES = {"USDC", "USDT", "USD"}
+
+
 def to_usd(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Convert BTC-denominated premiums to USD using that expiry's forward.
+    Put premiums in USD, which means different arithmetic per contract family.
 
-    See the module docstring for why the forward and not the index. This is
-    the single most consequential line in the data layer: get it wrong and
-    the failure surfaces two modules later, inside the root finder, looking
-    like a solver bug.
+    Deribit lists two families side by side:
+
+    - **Inverse** (`BTC-...`, `ETH-...`): margined and settled in the base
+      coin, premium quoted in that coin. Multiply by the expiry's forward.
+    - **Linear** (`BTC_USDC-...`, `SOL_USDC-...`): quoted in dollars already.
+      Multiply by nothing.
+
+    Applying the wrong one is not a small error in either direction. Checked
+    against Deribit's own mark_iv on live BTC_USDC quotes: inverting the raw
+    price gives a median error of 0.28 vol points, while multiplying by the
+    forward leaves 0 of 200 quotes invertible at all -- the same failure the
+    module docstring describes for inverse options, exactly reversed.
+
+    Frames without a `quote_currency` column are treated as inverse, which is
+    right for the Tardis archive (BTC inverse only) and for anything written
+    before the linear books were collected.
     """
     out = df.copy()
+    if "quote_currency" in out.columns:
+        is_linear = (
+            out["quote_currency"].astype(str).str.upper().isin(LINEAR_QUOTE_CURRENCIES)
+        )
+    else:
+        is_linear = pd.Series(False, index=out.index)
+    multiplier = np.where(is_linear, 1.0, out["forward"])
+
     for column in ("mid", "bid", "ask", "mark_price"):
         if column in out.columns:
-            out[f"{column}_usd"] = out[column] * out["forward"]
+            out[f"{column}_usd"] = out[column] * multiplier
     return out
 
 

@@ -31,6 +31,8 @@ def make_row(**overrides) -> dict:
     row = {
         "timestamp": dt.datetime(2026, 9, 7, 8, 0, tzinfo=UTC),
         "instrument_name": "BTC-8SEP26-80000-C",
+        "underlying_asset": "BTC",
+        "quote_currency": "BTC",
         "strike": 80000.0,
         "expiry_ts": dt.datetime(2026, 9, 8, 8, 0, tzinfo=UTC),
         "option_type": "C",
@@ -59,6 +61,21 @@ class TestParseInstrumentName:
         assert parsed["strike"] == 100000.0
         assert parsed["option_type"] == "C"
         assert parsed["expiry"] == dt.datetime(2026, 12, 27, 8, 0, tzinfo=UTC)
+        assert parsed["underlying_asset"] == "BTC"
+        assert parsed["quote_asset"] == "BTC"
+
+    def test_parses_linear_usdc_instrument(self):
+        # The leading field carries the quote asset for linear contracts.
+        parsed = parse_instrument_name("BTC_USDC-25SEP26-88000-C")
+        assert parsed["underlying_asset"] == "BTC"
+        assert parsed["quote_asset"] == "USDC"
+        assert parsed["strike"] == 88000.0
+
+    def test_parses_altcoin_linear_instrument(self):
+        parsed = parse_instrument_name("SOL_USDC-25SEP26-180-P")
+        assert parsed["underlying_asset"] == "SOL"
+        assert parsed["quote_asset"] == "USDC"
+        assert parsed["option_type"] == "P"
 
     def test_single_digit_day_has_no_leading_zero(self):
         parsed = parse_instrument_name("BTC-6SEP26-80000-P")
@@ -164,6 +181,54 @@ class TestUsdConversion:
         )
         out = clean_snapshot(make_frame([row]), otm_only=False)
         assert out["mid_usd"].iloc[0] == pytest.approx(strike - forward, rel=1e-6)
+
+
+class TestSettlementFamilies:
+    """
+    Deribit lists inverse and linear options side by side and they need
+    opposite treatment. Getting this backwards is not a small error: on live
+    BTC_USDC quotes, multiplying by the forward left 0 of 200 invertible.
+    """
+
+    def test_inverse_premium_is_multiplied_by_the_forward(self):
+        out = clean_snapshot(
+            make_frame([make_row(quote_currency="BTC")]), otm_only=False
+        )
+        assert out["mid_usd"].iloc[0] == pytest.approx(0.01025 * 80000.0)
+
+    def test_linear_premium_passes_through_unconverted(self):
+        # BTC_USDC-...-80000-C quotes in dollars already.
+        row = make_row(
+            instrument_name="BTC_USDC-8SEP26-80000-C",
+            quote_currency="USDC",
+            bid=800.0,
+            ask=820.0,
+        )
+        out = clean_snapshot(make_frame([row]), otm_only=False)
+        assert out["mid_usd"].iloc[0] == pytest.approx(810.0)
+
+    def test_missing_quote_currency_is_treated_as_inverse(self):
+        # The Tardis archive carries only BTC inverse rows and has no
+        # quote_currency column, as do snapshots written before the linear
+        # books were collected.
+        frame = make_frame([make_row()]).drop(columns=["quote_currency"])
+        out = clean_snapshot(frame, otm_only=False)
+        assert out["mid_usd"].iloc[0] == pytest.approx(0.01025 * 80000.0)
+
+    def test_mixed_frame_converts_each_row_by_its_own_family(self):
+        frame = make_frame(
+            [
+                make_row(quote_currency="BTC", bid=0.0100, ask=0.0105),
+                make_row(
+                    instrument_name="BTC_USDC-8SEP26-80000-C",
+                    quote_currency="USDC",
+                    bid=800.0,
+                    ask=820.0,
+                ),
+            ]
+        )
+        out = clean_snapshot(frame, otm_only=False).sort_values("quote_currency")
+        assert list(out["mid_usd"].round(2)) == [820.0, 810.0]
 
 
 class TestMoneynessAndSelection:

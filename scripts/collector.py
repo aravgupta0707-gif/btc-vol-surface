@@ -27,6 +27,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from data.fetch_deribit import COLLECT_CURRENCIES  # noqa: E402
 LOG_PATH = ROOT / "data" / "raw" / "collector.log"
 RAW_DIR = ROOT / "data" / "raw"
 TASK_NAME = "BTC-Vol-Surface-Collector"
@@ -185,13 +188,23 @@ def status() -> int:
             print("         is NOT collecting. Usually battery power. Re-run")
             print("         'install' after 'uninstall' to reapply settings.")
 
-    snapshots = sorted(RAW_DIR.glob("*.parquet")) if RAW_DIR.exists() else []
     print()
-    print(f"data     {len(snapshots)} snapshots in data/raw/")
-    if snapshots:
-        total = sum(p.stat().st_size for p in snapshots)
-        print(f"         {total / 1e6:.1f} MB total, "
-              f"oldest {snapshots[0].name}, newest {snapshots[-1].name}")
+    print("data     data/raw/")
+    grand = 0
+    for currency in COLLECT_CURRENCIES:
+        snaps = (
+            sorted(RAW_DIR.glob(f"{currency.lower()}_chain_*.parquet"))
+            if RAW_DIR.exists() else []
+        )
+        size = sum(p.stat().st_size for p in snaps)
+        grand += size
+        span = (
+            f"{snaps[0].name.split('_')[-1][:11]} .. "
+            f"{snaps[-1].name.split('_')[-1][:11]}" if snaps else "-"
+        )
+        print(f"         {currency:>5}  {len(snaps):4d} snapshots  "
+              f"{size / 1e6:6.1f} MB   {span}")
+    print(f"         {'total':>5}  {grand / 1e6:20.1f} MB")
     print(f"log      {LOG_PATH if LOG_PATH.exists() else '(no runs logged yet)'}")
     return 0
 
@@ -206,30 +219,37 @@ def logs(lines: int = 20) -> int:
 
 
 def run_once() -> int:
-    """One snapshot, appending a line to the log. This is what the task runs."""
+    """
+    One snapshot per collected currency, appending a line each to the log.
+    This is what the scheduled task runs.
+
+    Each currency is attempted independently: one failing book must not cost
+    us the others, since a missed hour cannot be collected later.
+    """
     import datetime as dt
     import traceback
 
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    try:
-        from data.fetch_deribit import snapshot_chain, write_snapshot
+    lines, code = [], 0
+    for currency in COLLECT_CURRENCIES:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+        try:
+            from data.fetch_deribit import snapshot_chain, write_snapshot
 
-        frame = snapshot_chain("BTC")
-        path = write_snapshot(frame)
-        line = (
-            f"{stamp}  ok    {len(frame):4d} instruments  "
-            f"{frame['expiry_ts'].nunique():2d} expiries  {path.name}"
-        )
-        code = 0
-    except Exception as exc:  # noqa: BLE001 - the log is the error channel here
-        line = f"{stamp}  FAIL  {type(exc).__name__}: {exc}"
-        traceback.print_exc()
-        code = 1
+            frame = snapshot_chain(currency)
+            path = write_snapshot(frame, currency=currency)
+            lines.append(
+                f"{stamp}  {currency:>5}  ok    {len(frame):5d} instruments  "
+                f"{frame['underlying_asset'].nunique()} underlying  {path.name}"
+            )
+        except Exception as exc:  # noqa: BLE001 - the log is the error channel
+            lines.append(f"{stamp}  {currency:>5}  FAIL  {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            code = 1
 
     with LOG_PATH.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
-    print(line)
+        handle.write("\n".join(lines) + "\n")
+    print("\n".join(lines))
     return code
 
 

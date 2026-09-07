@@ -34,6 +34,12 @@ import requests
 BASE_URL = "https://www.deribit.com/api/v2"
 RAW_DIR = Path(__file__).resolve().parent / "raw"
 
+# The three Deribit currencies that list options. BTC and ETH are the
+# inverse, coin-settled books; USDC is the linear book and returns seven
+# underlyings (BTC, ETH, SOL, XRP, AVAX, HYPE, TRX) in a single request, so
+# it costs one call and yields six more markets.
+COLLECT_CURRENCIES = ("BTC", "ETH", "USDC")
+
 _MONTHS = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
     "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
@@ -70,14 +76,22 @@ def parse_instrument_name(name: str) -> dict:
     strike 100000.0, option_type 'C'. Deribit options expire at 08:00 UTC;
     that time is part of the expiry, not a detail to round away, because a
     few hours matters materially for near-dated time-to-expiry.
+
+    Linear contracts carry the quote asset in the leading field, as in
+    'BTC_USDC-25SEP26-88000-C'. That is split out, because the two families
+    settle differently and must not be priced the same way -- see
+    data/clean.py::to_usd.
     """
     currency, expiry_code, strike, option_type = name.split("-")
+    underlying_asset, _, quote_asset = currency.partition("_")
     day = int(expiry_code[:-5])
     month = _MONTHS[expiry_code[-5:-2].upper()]
     year = 2000 + int(expiry_code[-2:])
     expiry = dt.datetime(year, month, day, 8, 0, tzinfo=dt.timezone.utc)
     return {
         "currency": currency,
+        "underlying_asset": underlying_asset,
+        "quote_asset": quote_asset or underlying_asset,
         "expiry": expiry,
         "strike": float(strike),
         "option_type": option_type,
@@ -123,17 +137,28 @@ def snapshot_chain(currency: str = "BTC") -> pd.DataFrame:
     """
     Pull a full snapshot of the current option chain as one timestamped frame.
 
-    Premiums (bid, ask, mark_price) are in BTC, as reported. `mark_iv` is in
-    percent. `underlying_price` is the forward for that instrument's expiry
-    and `underlying_index` names it -- together these remove any need to
-    build a forward curve from funding rates by hand.
+    Premiums are reported exactly as Deribit quotes them, which differs by
+    family: inverse contracts (currency BTC or ETH) quote in the base coin,
+    while USDC-quoted contracts quote in dollars. `quote_currency` carries
+    the distinction and data/clean.py::to_usd acts on it. `mark_iv` is in
+    percent, and `underlying_price` is the forward for that instrument's
+    expiry, which removes any need to build a forward curve by hand.
+
+    Note that currency="USDC" returns several underlyings in one response --
+    BTC, ETH, SOL, XRP, AVAX, HYPE and TRX -- so `underlying_asset` is the
+    column to group by, not the requested currency.
     """
     as_of = dt.datetime.now(dt.timezone.utc)
     summaries = _get(
         "public/get_book_summary_by_currency",
         {"currency": currency, "kind": "option"},
     )
-    index_price = get_index_price(currency)
+    try:
+        index_price = get_index_price(currency)
+    except RuntimeError:
+        # No usdc_usd index exists; the per-expiry forward on each row is
+        # what pricing actually needs, so this is not worth failing over.
+        index_price = float("nan")
 
     rows = []
     for row in summaries:
@@ -146,6 +171,8 @@ def snapshot_chain(currency: str = "BTC") -> pd.DataFrame:
             {
                 "timestamp": as_of,
                 "instrument_name": name,
+                "underlying_asset": parsed["underlying_asset"],
+                "quote_currency": row.get("quote_currency") or parsed["quote_asset"],
                 "strike": parsed["strike"],
                 "expiry_ts": parsed["expiry"],
                 "option_type": parsed["option_type"],
@@ -165,29 +192,40 @@ def snapshot_chain(currency: str = "BTC") -> pd.DataFrame:
     frame = pd.DataFrame(rows)
     if frame.empty:
         raise RuntimeError(f"empty {currency} option chain snapshot")
-    return frame.sort_values(["expiry_ts", "strike", "option_type"]).reset_index(
-        drop=True
-    )
+    return frame.sort_values(
+        ["underlying_asset", "expiry_ts", "strike", "option_type"]
+    ).reset_index(drop=True)
 
 
-def write_snapshot(frame: pd.DataFrame, raw_dir: Path = RAW_DIR) -> Path:
-    """Write one snapshot to a timestamped parquet file and return the path."""
+def write_snapshot(
+    frame: pd.DataFrame, raw_dir: Path = RAW_DIR, currency: str = "BTC"
+) -> Path:
+    """
+    Write one snapshot to a timestamped parquet file and return the path.
+
+    Named `<currency>_chain_<stamp>.parquet`. The prefix matters: globbing
+    `*.parquet` across a directory holding several currencies would silently
+    blend them into one "chain". Existing BTC files already match this
+    pattern, so nothing needs renaming.
+    """
     raw_dir.mkdir(parents=True, exist_ok=True)
     stamp = frame["timestamp"].iloc[0].strftime("%Y%m%dT%H%M%SZ")
-    path = raw_dir / f"btc_chain_{stamp}.parquet"
+    path = raw_dir / f"{currency.lower()}_chain_{stamp}.parquet"
     frame.to_parquet(path, index=False)
     return path
 
 
 def main() -> None:
-    frame = snapshot_chain("BTC")
-    path = write_snapshot(frame)
-    quoted = frame["bid"].notna().sum()
-    print(
-        f"{frame['timestamp'].iloc[0]:%Y-%m-%d %H:%M:%S}Z  "
-        f"{len(frame)} instruments, {frame['expiry_ts'].nunique()} expiries, "
-        f"{quoted} with a bid  ->  {path.name}"
-    )
+    for currency in COLLECT_CURRENCIES:
+        frame = snapshot_chain(currency)
+        path = write_snapshot(frame, currency=currency)
+        quoted = frame["bid"].notna().sum()
+        print(
+            f"{frame['timestamp'].iloc[0]:%Y-%m-%d %H:%M:%S}Z  {currency:>5}  "
+            f"{len(frame):5d} instruments, "
+            f"{frame['underlying_asset'].nunique()} underlyings, "
+            f"{quoted} with a bid  ->  {path.name}"
+        )
 
 
 if __name__ == "__main__":
