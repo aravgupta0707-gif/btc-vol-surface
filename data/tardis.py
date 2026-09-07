@@ -108,11 +108,32 @@ def load_day(
     if not latest:
         raise RuntimeError(f"no {currency} rows in the archive for {day}")
 
+    # A day's file spills slightly outside its nominal UTC day -- 2020-03-01
+    # opens with a 2020-02-29 23:00 bucket. That bucket is partial, so drop
+    # anything outside the requested day and keep "one file, one UTC day"
+    # true. Free days are never adjacent, so nothing is lost by doing this.
+    day_start_us = int(
+        dt.datetime(day.year, day.month, day.day, tzinfo=dt.timezone.utc).timestamp()
+        * 1_000_000
+    )
+    day_end_us = day_start_us + 24 * 3600 * 1_000_000
+    latest = {
+        key: row
+        for key, row in latest.items()
+        if day_start_us <= int(row["timestamp"]) < day_end_us
+    }
+    if not latest:
+        raise RuntimeError(f"no {currency} rows inside the UTC day {day}")
+
     frame = pd.DataFrame(
         [{key: row[key] for key in _KEEP} for row in latest.values()]
     )
     for column in _NUMERIC:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    # Microsecond epochs: keep them as integers, since the bucketing and the
+    # expiry conversion both need integer arithmetic, not float.
+    for column in ("timestamp", "expiration"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("int64")
 
     return _to_snapshot_schema(frame, bucket_us)
 

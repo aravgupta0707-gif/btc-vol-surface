@@ -61,6 +61,27 @@ Everything upstream (data → IV → SVI → arbitrage → Greeks) works fine on
 single live snapshot. Only §7–8 are blocked, and on wall-clock time rather
 than on code. Hence the two-track data strategy below.
 
+### 5. The 15% spread filter measures premium size, not liquidity
+
+Found while implementing Phase 1. `BUILD_GUIDE.md` §1.2 proposes dropping
+quotes whose spread exceeds 15% of mid. On a live chain that rule passes 96%
+of ITM quotes and only 68% of OTM ones -- not because ITM options are more
+liquid, but because they are more expensive, and a fixed *relative* spread is
+trivial to satisfy on a 0.16 BTC premium and hard on a 0.01 BTC one.
+
+The bias runs directly against `select_otm`, which then discards exactly the
+quotes the filter kept. Together they cut a 964-row chain to 278 rows, with
+front expiries down to 2-8 points.
+
+Fix: a quote passes if it is inside 15% of mid **or** within two exchange
+ticks (0.0001 BTC below a 0.005 premium, 0.0005 above). You cannot ask a
+market to be tighter than its tick. That recovers 73 of the 132 wrongly
+rejected OTM quotes.
+
+Still a price-space proxy. The principled version measures the spread in vol
+points -- invert bid and ask separately, require the gap under a threshold --
+which needs the Phase 2 inverter. Track B carries `bid_iv`/`ask_iv` already.
+
 ### Live chain, as measured
 
 ```
@@ -131,18 +152,22 @@ They also support two different backtests, see Phase 6.
 
 ### Phase 0 — repo setup
 
-- [ ] `git init`, first commit of the scaffold as-is
-- [ ] add `pytest` to `requirements.txt`, create `tests/`
-- [ ] delete `btc-vol-surface.zip` once the tree is committed
+- [x] `git init`, first commit of the scaffold as-is
+- [x] add `pytest` to `requirements.txt`, create `tests/`
+- [x] delete `btc-vol-surface.zip` once the tree is committed
 
 ### Phase 1 — collector and cleaning
 
-- [ ] `fetch_deribit.py` on the book-summary endpoint, timestamped parquet
+- [x] `fetch_deribit.py` on the book-summary endpoint, timestamped parquet
       to `data/raw/` (already gitignored)
-- [ ] **get it on a scheduler immediately** — Track A starts accruing
-- [ ] `clean.py`: BTC→USD conversion, mid, spread filter (>15% of mid),
+- [ ] **scheduler: open, recommendation is to defer.** Track A buys one thing —
+      consecutive hours, which the free archive cannot provide at one day per
+      month. That matters only for backtesting a hold longer than 24h. The
+      intraday design in Phase 6 needs none of it. Revisit at Phase 6; run
+      `python -m data.fetch_deribit` by hand meanwhile.
+- [x] `clean.py`: BTC→USD conversion, mid, spread filter (>15% of mid),
       zero-bid drop, exact UTC time-to-expiry against 08:00 expiries
-- [ ] Track B loader: streaming download + hourly downsample + BTC filter
+- [x] Track B loader: streaming download + hourly downsample + BTC filter
 
 **Checkpoint:** a clean smile for one expiry that looks like a smile.
 
