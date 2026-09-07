@@ -25,7 +25,9 @@ pip install -r requirements.txt
 ```
 
 ## Status
-- [ ] Data pipeline
+- [x] Data pipeline — live collector, cleaning, historical archive loader.
+      `python scripts/verify_data.py` runs the checkpoint (33 checks);
+      `python scripts/collector.py status` shows the hourly collector.
 - [ ] BS/Black-76 inversion
 - [ ] SVI calibration
 - [ ] Arbitrage-free validation
