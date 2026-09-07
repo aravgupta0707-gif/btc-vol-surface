@@ -173,9 +173,9 @@ They also support two different backtests, see Phase 6.
 
 ### Phase 2 — Black-76 and inversion
 
-- [ ] `price`, `vega`
-- [ ] Brenner-Subrahmanyam seed → Newton → Brent `[0.01, 5.0]` fallback →
-      `None` on failure
+- [x] `price`, `vega`, `greeks`, vectorised over strikes
+- [x] Brenner-Subrahmanyam seed → capped Newton → Brent fallback → `None`,
+      with deep-ITM quotes routed to their OTM twin through put-call parity
 
 The most test-worthy module in the project. Worth real tests:
 

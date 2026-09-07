@@ -28,7 +28,8 @@ pip install -r requirements.txt
 - [x] Data pipeline — live collector, cleaning, historical archive loader.
       `python scripts/verify_data.py` runs the checkpoint (33 checks);
       `python scripts/collector.py status` shows the hourly collector.
-- [ ] BS/Black-76 inversion
+- [x] BS/Black-76 inversion — matches Deribit's own `mark_iv` to a median
+      of 0.048 vol points. `python scripts/verify_pricing.py`
 - [ ] SVI calibration
 - [ ] Arbitrage-free validation
 - [ ] Surface object
