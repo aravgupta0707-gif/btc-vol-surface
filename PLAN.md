@@ -160,11 +160,11 @@ They also support two different backtests, see Phase 6.
 
 - [x] `fetch_deribit.py` on the book-summary endpoint, timestamped parquet
       to `data/raw/` (already gitignored)
-- [ ] **scheduler: open, recommendation is to defer.** Track A buys one thing —
-      consecutive hours, which the free archive cannot provide at one day per
-      month. That matters only for backtesting a hold longer than 24h. The
-      intraday design in Phase 6 needs none of it. Revisit at Phase 6; run
-      `python -m data.fetch_deribit` by hand meanwhile.
+- [x] scheduler: hourly Windows task, managed by `scripts/collector.py`
+      (`status`, `watch`, `logs`, `stop`, `start`, `uninstall`). Note that
+      `schtasks` defaults `DisallowStartIfOnBatteries` to true, which parks
+      the task in Queued while still reporting Last Result 0 — it looks like
+      it ran and collects nothing. `install` reapplies settings to fix that.
 - [x] `clean.py`: BTC→USD conversion, mid, spread filter (>15% of mid),
       zero-bid drop, exact UTC time-to-expiry against 08:00 expiries
 - [x] Track B loader: streaming download + hourly downsample + BTC filter
