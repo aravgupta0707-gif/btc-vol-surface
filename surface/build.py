@@ -70,6 +70,14 @@ def build_slices(quotes: pd.DataFrame) -> tuple[dict, dict, list]:
         fit["atm_vol"] = float(np.sqrt(max(w_atm, 0.0) / T)) * 100
         fit["expiry"] = expiry
         fit["T"] = T
+        # Carried so a VolSurface can be built straight from the fits: k was
+        # measured against this forward, so the surface must use the same one.
+        fit["forward"] = float(group["forward"].iloc[0])
+        # The span of log-moneyness this slice actually saw quotes over.
+        # Outside it the fitted wing is pure extrapolation, and a narrow
+        # slice extrapolated far enough will overtake a longer-dated one --
+        # see surface/surface.py.
+        fit["k_range"] = (float(k.min()), float(k.max()))
 
         params[T] = fit
         ranges[T] = (float(k.min()), float(k.max()))

@@ -219,10 +219,12 @@ failures than one calm live snapshot ever would.
 
 ### Phase 5 — surface object and Greeks
 
-- [ ] `VolSurface`: total-variance interpolation, flat extrapolation past
-      the long end
-- [ ] Black-76 greeks
-- [ ] validate delta against Deribit's own quoted delta
+- [x] `VolSurface`: total-variance interpolation, variance-rate held flat
+      past both ends, each slice clamped to the narrower of its quoted range
+      and its trust radius, running max across T to close the remainder
+- [x] Black-76 greeks, plus coin-settled equivalents for hedging
+- [x] validated: delta matches to a median of 0.0007, vega differs only by
+      Deribit's per-1% convention (ratio 99.96), gamma matches to 1%
 
 **Inverse-option wrinkle:** Deribit's quoted delta is in BTC terms, and the
 payoff being BTC-settled means position value depends on the BTC price twice

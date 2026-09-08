@@ -35,7 +35,8 @@ pip install -r requirements.txt
 - [x] Arbitrage-free validation — no violations among quoted strikes;
       6 regions in the extrapolated wings, logged in `VIOLATIONS.md`.
       `python scripts/check_arbitrage.py`
-- [ ] Surface object
-- [ ] Greeks + validation
+- [x] Surface object — arbitrage-free by construction across the whole
+      T-continuum. `python scripts/verify_surface.py`
+- [x] Greeks + validation — delta matches Deribit's to 0.0007 median.
 - [ ] Strategy + backtest
 - [ ] Dashboard / write-up
