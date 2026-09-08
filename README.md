@@ -30,7 +30,8 @@ pip install -r requirements.txt
       `python scripts/collector.py status` shows the hourly collector.
 - [x] BS/Black-76 inversion — matches Deribit's own `mark_iv` to a median
       of 0.048 vol points. `python scripts/verify_pricing.py`
-- [ ] SVI calibration
+- [x] SVI calibration — 10/10 live slices, median 0.165 vol points against
+      the market. `python scripts/fit_surface.py`
 - [ ] Arbitrage-free validation
 - [ ] Surface object
 - [ ] Greeks + validation

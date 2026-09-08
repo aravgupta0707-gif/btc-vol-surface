@@ -190,8 +190,13 @@ liquid strikes. If it doesn't, it is almost certainly the BTC/USD units
 
 ### Phase 3 — SVI calibration
 
-- [ ] per-expiry fit, vega-weighted, L-BFGS-B, bounds per `BUILD_GUIDE.md` §3.1
-- [ ] plot fitted params across expiries to spot instability
+- [x] per-expiry fit, vega-weighted, via the De Marco-Martini quasi-explicit
+      reduction: (a, d, c) solved exactly by constrained least squares, only
+      (m, sigma) searched. A 5-D non-convex problem becomes a 2-D one.
+- [x] smoothness reported on both raw params and derived quantities.
+      (m, sigma) are weakly identified for wide smiles, so ATM vol and ATM
+      skew are the honest stability check -- ATM vol steps 2.9% of level
+      while `a` steps 78%.
 
 Start with the back expiries (88–97 usable points each), then work forward.
 The 1–5 day slices have 23–37 points for 5 parameters and will be unstable;
