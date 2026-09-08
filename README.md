@@ -32,7 +32,9 @@ pip install -r requirements.txt
       of 0.048 vol points. `python scripts/verify_pricing.py`
 - [x] SVI calibration — 10/10 live slices, median 0.165 vol points against
       the market. `python scripts/fit_surface.py`
-- [ ] Arbitrage-free validation
+- [x] Arbitrage-free validation — no violations among quoted strikes;
+      6 regions in the extrapolated wings, logged in `VIOLATIONS.md`.
+      `python scripts/check_arbitrage.py`
 - [ ] Surface object
 - [ ] Greeks + validation
 - [ ] Strategy + backtest

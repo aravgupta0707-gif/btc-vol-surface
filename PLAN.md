@@ -206,9 +206,11 @@ that's a data property, not a bug in the fit.
 
 ### Phase 4 — arbitrage checks
 
-- [ ] calendar: `w(k,T)` non-decreasing in T at fixed k
-- [ ] butterfly: Durrleman's `g(k) >= 0`
-- [ ] **a violations log** — file, timestamp, what broke, how it was resolved
+- [x] calendar: `w(k,T)` non-decreasing in T, adjacent maturities only
+- [x] butterfly: Durrleman's `g(k) >= 0`, closed-form SVI derivatives,
+      cross-checked by integrating the implied density to 1.0
+- [x] **a violations log** — `VIOLATIONS.md`, written by
+      `python scripts/check_arbitrage.py --log`
 
 Expect violations at the wings and in the thin front slices. Per
 `BUILD_GUIDE.md` §4.3 the log is the deliverable, not just the clean surface.
