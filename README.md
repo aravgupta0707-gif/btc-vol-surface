@@ -38,5 +38,7 @@ pip install -r requirements.txt
 - [x] Surface object — arbitrage-free by construction across the whole
       T-continuum. `python scripts/verify_surface.py`
 - [x] Greeks + validation — delta matches Deribit's to 0.0007 median.
-- [ ] Strategy + backtest
+- [x] Strategy + backtest — delta-hedged short straddle with honest costs
+      (spread, slippage, perp funding) and a walk-forward loop that cannot
+      see forward. `python scripts/run_backtest.py`
 - [ ] Dashboard / write-up

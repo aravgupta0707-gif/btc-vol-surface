@@ -234,7 +234,7 @@ until this is handled, and Phase 6's hedge ratios depend on it being right.
 **Checkpoint:** delta matches Deribit's within a small tolerance across
 liquid strikes.
 
-### Phase 6 — strategy and backtest
+### Phase 6 — strategy and backtest  [machinery done, statistics pending]
 
 Two backtests, one per data track:
 

@@ -139,6 +139,20 @@ def main() -> int:
     print(f"  realized vol          {out['realized_vol'] * 100:8.2f}%")
     print(f"  variance gap          {out['variance_gap']:+8.4f}"
           f"   ({'premium earned' if out['variance_gap'] > 0 else 'premium paid back'})")
+
+    # The gate itself. BUILD_GUIDE.md section 8: realised P&L must track
+    # 0.5 * vega * (implied^2 - realized^2) / implied, scaled by the fraction
+    # of the option's life actually held. If it does not, the hedging or the
+    # cost logic is wrong and every metric below is fiction.
+    theoretical = out["theoretical_pnl"]
+    gross = out["total_pnl"] + out["slippage_paid"] + position.entry_spread_cost
+    print(f"  theoretical P&L       {theoretical:+8,.2f}   "
+          f"(vega x variance gap, pro-rated for time held)")
+    print(f"  realised, gross of costs {gross:+8,.2f}")
+    if abs(theoretical) > 1e-9:
+        ratio = gross / theoretical
+        verdict = "tracks" if 0.5 <= ratio <= 2.0 else "DOES NOT TRACK -- investigate"
+        print(f"  ratio                 {ratio:8.2f}   {verdict}")
     sign_ok = np.sign(out["variance_gap"]) == np.sign(out["total_pnl"])
     print(f"  P&L sign matches gap  {'yes' if sign_ok else 'NO -- investigate'}")
 
