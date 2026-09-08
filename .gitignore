@@ -7,3 +7,4 @@ data/raw/
 *.parquet
 .DS_Store
 .claude/
+data/research/
