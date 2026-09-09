@@ -18,8 +18,14 @@ Two quirks of the endpoint, both found by trial:
 
 Size is the real constraint: one day is ~516 MB gzipped, ~2.1 GB raw, ~10.8M
 rows, because it is every tick-level quote update on every instrument. Half
-of it is ETH. So this module streams the gzip, filters to BTC, and keeps only
-the last quote per instrument per time bucket, never materializing the CSV.
+of it is ETH. So this module streams the gzip, filters to the currencies
+asked for, and keeps only the last quote per instrument per time bucket,
+never materializing the CSV.
+
+The transfer is the entire cost here, and one transfer carries every
+currency. Extracting BTC and ETH together therefore costs no more network
+than BTC alone, while fetching ETH in a later pass costs a second full
+download of identical bytes -- so ask for everything wanted up front.
 At hourly buckets one day lands at ~20-30k rows and the whole free archive
 fits comfortably in a few hundred MB of parquet.
 
@@ -31,6 +37,7 @@ filter and a historical check of the Phase 5 greeks.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -99,15 +106,37 @@ def load_day(
     """
     Stream one archive day and return a downsampled chain snapshot frame.
 
+    Single-currency wrapper over `load_day_multi`.
+    """
+    frames = load_day_multi(day, bucket_minutes, (currency,))
+    if currency not in frames:
+        raise RuntimeError(f"no {currency} rows inside the UTC day {day}")
+    return frames[currency]
+
+
+def load_day_multi(
+    day: dt.date,
+    bucket_minutes: int = 60,
+    currencies: Sequence[str] = ("BTC",),
+) -> dict[str, pd.DataFrame]:
+    """
+    Stream one archive day once and return a snapshot frame per currency.
+
     Keeps the last quote per (instrument, time bucket), so `bucket_minutes=60`
     yields hourly snapshots comparable to the live collector's cadence. The
     gzip is decompressed on the fly and never written to disk.
 
     Decompression, parsing, column selection and filtering all happen inside
     Arrow; only the surviving few thousand rows per block cross into pandas.
+
+    Currencies are split during that single pass, because the download is the
+    whole cost and one download carries all of them.
+
+    A currency with no rows in the day is omitted from the result rather than
+    failing the day, so one empty book does not cost the others -- the same
+    isolation the live collector uses. Only a day with nothing at all raises.
     """
     bucket_us = bucket_minutes * 60 * 1_000_000
-    prefix = f"{currency}-"
 
     # A day's file spills slightly outside its nominal UTC day -- 2020-03-01
     # opens with a 2020-02-29 23:00 bucket. That bucket is partial, so
@@ -119,7 +148,7 @@ def load_day(
     )
     day_end_us = day_start_us + 24 * 3600 * 1_000_000
 
-    kept: list[pd.DataFrame] = []
+    kept: dict[str, list[pd.DataFrame]] = {c: [] for c in currencies}
     with requests.get(
         day_url(day), headers=_HEADERS, stream=True, timeout=1800
     ) as response:
@@ -134,40 +163,53 @@ def load_day(
         )
         for batch in reader:
             # Filter inside Arrow rather than in Python. A recent day is tens
-            # of millions of rows, half of them ETH, and almost everything
-            # that survives is a superseded quote in a bucket we already
-            # have -- so every row that reaches pandas is one we cannot avoid.
-            mask = pc.and_(
-                pc.starts_with(batch.column("symbol"), pattern=prefix),
-                pc.and_(
-                    pc.greater_equal(batch.column("timestamp"), day_start_us),
-                    pc.less(batch.column("timestamp"), day_end_us),
-                ),
+            # of millions of rows, and almost everything that survives is a
+            # superseded quote in a bucket we already have -- so every row
+            # that reaches pandas is one we cannot avoid.
+            in_day = pc.and_(
+                pc.greater_equal(batch.column("timestamp"), day_start_us),
+                pc.less(batch.column("timestamp"), day_end_us),
             )
-            batch = batch.filter(mask)
-            if batch.num_rows == 0:
-                continue
-            chunk = batch.to_pandas()
-            chunk["_bucket"] = chunk["timestamp"] // bucket_us
-            # Rows arrive in time order, so within a block the last row for a
-            # (symbol, bucket) pair is the freshest quote seen so far.
-            kept.append(chunk.drop_duplicates(["symbol", "_bucket"], keep="last"))
+            for currency in currencies:
+                sub = batch.filter(
+                    pc.and_(
+                        pc.starts_with(
+                            batch.column("symbol"), pattern=f"{currency}-"
+                        ),
+                        in_day,
+                    )
+                )
+                if sub.num_rows == 0:
+                    continue
+                chunk = sub.to_pandas()
+                chunk["_bucket"] = chunk["timestamp"] // bucket_us
+                # Rows arrive in time order, so within a block the last row
+                # for a (symbol, bucket) pair is the freshest seen so far.
+                kept[currency].append(
+                    chunk.drop_duplicates(["symbol", "_bucket"], keep="last")
+                )
 
-    if not kept:
-        raise RuntimeError(f"no {currency} rows inside the UTC day {day}")
+    if not any(kept.values()):
+        raise RuntimeError(
+            f"no {'/'.join(currencies)} rows inside the UTC day {day}"
+        )
 
     # One more pass across block boundaries. Each block is already collapsed
     # to a few thousand rows, so this is cheap. Sorting first makes "last"
     # well defined even where exchange timestamps run slightly out of order
     # against the file's own ordering.
-    frame = (
-        pd.concat(kept, ignore_index=True)
-        .sort_values("timestamp")
-        .drop_duplicates(["symbol", "_bucket"], keep="last")
-        .drop(columns="_bucket")
-    )
-
-    return _to_snapshot_schema(frame, bucket_us)
+    out: dict[str, pd.DataFrame] = {}
+    for currency, chunks in kept.items():
+        if not chunks:
+            continue
+        frame = (
+            pd.concat(chunks, ignore_index=True)
+            .sort_values("timestamp")
+            .drop_duplicates(["symbol", "_bucket"], keep="last")
+            .drop(columns="_bucket")
+        )
+        out[currency] = _to_snapshot_schema(frame, bucket_us)
+    return out
 
 
 def _to_snapshot_schema(frame: pd.DataFrame, bucket_us: int) -> pd.DataFrame:
@@ -217,31 +259,44 @@ def fetch_free_archive(
     hist_dir: Path = HIST_DIR,
     days: list[dt.date] | None = None,
     skip_existing: bool = True,
+    currencies: Sequence[str] = ("BTC", "ETH"),
 ) -> list[Path]:
     """
-    Download every free day not already on disk, one parquet per day.
+    Download every free day not already on disk, one parquet per currency-day.
 
     Each day is a ~516 MB transfer, so the full archive is a long job; it is
-    resumable because completed days are skipped.
+    resumable because completed currency-days are skipped.
+
+    A day is re-downloaded when *any* requested currency is missing, and only
+    the missing ones are extracted from that pass. So adding a currency later
+    re-transfers every day for it -- the reason the default asks for BTC and
+    ETH together.
     """
     hist_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for day in days or free_days():
-        path = hist_dir / f"btc_chain_{day:%Y%m%d}.parquet"
-        if skip_existing and path.exists():
-            written.append(path)
+        paths = {
+            c: hist_dir / f"{c.lower()}_chain_{day:%Y%m%d}.parquet"
+            for c in currencies
+        }
+        todo = [c for c in currencies if not (skip_existing and paths[c].exists())]
+        if not todo:
+            written.extend(paths.values())
             continue
         try:
-            frame = load_day(day, bucket_minutes=bucket_minutes)
+            frames = load_day_multi(day, bucket_minutes, todo)
         except (requests.RequestException, RuntimeError, OSError) as exc:
-            print(f"{day}  SKIPPED: {exc}")
+            print(f"{day}  SKIPPED: {exc}", flush=True)
             continue
-        frame.to_parquet(path, index=False)
-        written.append(path)
-        print(
-            f"{day}  {len(frame):6d} rows  "
-            f"{frame['expiry_ts'].nunique():2d} expiries  -> {path.name}"
-        )
+        for currency, frame in frames.items():
+            path = paths[currency]
+            frame.to_parquet(path, index=False)
+            written.append(path)
+            print(
+                f"{day}  {currency:4s} {len(frame):6d} rows  "
+                f"{frame['expiry_ts'].nunique():2d} expiries  -> {path.name}",
+                flush=True,
+            )
     return written
 
 

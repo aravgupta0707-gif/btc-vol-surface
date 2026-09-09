@@ -240,8 +240,21 @@ are flat rather than smooth. A desk would fit a wing model instead.
 
 ## 6. In flight
 
-**Track B archive download**, launched 2026-09-09, PID in
-`data/research/archive_fetch.pid`, log at `data/research/archive_fetch.log`.
+**Track B archive download**, managed by `scripts/fetch_archive.py`
+(`start` / `status` / `logs` / `stop`), log at
+`data/research/archive_fetch.log`.
+
+It runs as a scheduled task rather than a background process, for a reason
+worth keeping: the first attempt used `Start-Process`, reached 26 of 79 days
+and stopped with an empty stderr and no traceback -- killed with its parent
+shell, not crashed. A scheduled task is the mechanism the collector already
+proves survives.
+
+It fetches **BTC and ETH together**, because the transfer is the entire cost
+and one download carries every currency. Fetching ETH in a later pass would
+re-transfer identical bytes for all 79 days. That also moves spin-off
+project B off the wall-clock critical path -- ETH history arrives with BTC
+history rather than needing weeks of live collection.
 Fetching all 79 free days to `data/historical/btc_chain_YYYYMMDD.parquet`.
 Resumable — `fetch_free_archive` skips days already on disk, so re-running
 after an interruption costs nothing. Expect 2-4 hours; early days take ~25s,
@@ -276,7 +289,13 @@ In priority order:
 Ranked by value per unit of work given what already exists. All four reuse
 the existing pipeline; none needs new infrastructure.
 
-### A. Implied risk-neutral density monitor — ~1 day
+### A. Implied risk-neutral density monitor — **BUILT**
+
+`surface/density.py` + `scripts/rnd_monitor.py`, 22 tests. See §10.
+
+Original scoping follows for reference.
+
+#### (original scope) ~1 day
 
 **Question:** what probability does the market assign to BTC below $50k in
 three months, and how does that move over time?
@@ -360,6 +379,50 @@ gated and needs more history than B does.
 **Altcoin surfaces** (SOL, XRP, AVAX, HYPE, TRX) come free with the USDC
 call and are already being banked, but daily volumes of $7k-159k make them
 too thin to build on today. In six months there may be something there.
+
+---
+
+## 10. The RND monitor (spin-off A, built)
+
+```bash
+python scripts/rnd_monitor.py              # latest snapshot
+python scripts/rnd_monitor.py --history    # across Track A
+python scripts/rnd_monitor.py --days 30
+```
+
+`surface/density.py` reads the risk-neutral density out of the surface and
+turns it into quantiles and tail probabilities. It shares Durrleman's g(k)
+with `arbitrage.py` deliberately: g >= 0 is exactly the condition that the
+density is a density, so the butterfly check and the RND are one statement
+seen twice.
+
+Derivatives are numerical here rather than closed form, because the surface
+value at a point may be an interpolation, a clamped wing, or the running
+maximum -- none of which has a clean analytic derivative, and finite
+differences capture what the surface actually serves.
+
+Verification, in order of what it would cost to get wrong:
+
+- With flat vol the density must collapse to the lognormal one, k Normal
+  (-w/2, w). Tested against `scipy.stats.norm` directly.
+- **E[S_T] = F**, the risk-neutrality condition, holds to five decimals.
+  This is the invariant that pins the Jacobian and the drift together.
+- The density integrates to one across maturities.
+
+Two things found while building it:
+
+- The CDF originally truncated at the nearest grid point below the target
+  rather than interpolating to it, losing up to half a cell of mass -- a
+  0.0016 error on a number meant to be read as a percentage.
+- A test asserting the median sits below the forward was wrong, not the
+  code. Risk-neutrality pins the *mean* at F, and a downside skew is a long
+  left tail, which with the mean fixed pushes the median the other way.
+
+Measured on 45 hours of Track A at a 90-day horizon: ATM vol 38.6-39.8%,
+5% quantile ~53k, 95% ~108k, density mass 0.974-1.019. **P(below 60k) has
+standard deviation 1.74 against P(above 100k)'s 0.73** -- the downside tail
+is 2.4x noisier, because the left wing is where quotes thin out and where
+clamping starts to bite. Worth knowing before quoting a crash probability.
 
 ---
 
