@@ -49,37 +49,91 @@ def _registered() -> bool:
     return _schtasks("/query", "/tn", TASK_NAME).returncode == 0
 
 
-def run() -> int:
-    """Do the download. This is what the task executes."""
-    from data.tardis import fetch_free_archive
+# Tardis rate-limits the free tier. The first attempt got 52 extractions
+# through and was then refused for every remaining day, and the limit had
+# cleared again within 22 hours -- so it is a rolling window on request
+# count, not a hard quota. Pace requests and stop when refused.
+DELAY_SECONDS = 20.0
+BACKOFF_SECONDS = (60.0, 180.0, 420.0)
 
+
+def _log(text: str) -> None:
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(text.rstrip("\n") + "\n")
+
+
+def run() -> int:
+    """
+    Do the download. This is what the task executes.
+
+    The loop lives here rather than using `fetch_free_archive` because of how
+    a rate limit has to be handled. That function logs a skip and moves on,
+    which is right for a one-off failure but wrong for a 429: the very next
+    request is refused too, so one limit burned all 53 remaining days in a
+    few seconds and left the queue looking attempted. Here a 429 backs off,
+    retries, and if still refused **stops the run** -- leaving every
+    untouched day genuinely untouched for the next pass.
+    """
+    import time
+
+    import requests
+
+    from data.tardis import free_days, load_day_multi
+
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    _log(f"--- start {stamp}, currencies {', '.join(CURRENCIES)} ---")
+    HIST_DIR.mkdir(parents=True, exist_ok=True)
 
-    class Tee:
-        """fetch_free_archive prints progress; send it to the log as well."""
-
-        def write(self, text):
-            if text.strip():
-                with LOG_PATH.open("a", encoding="utf-8") as handle:
-                    handle.write(text if text.endswith("\n") else text + "\n")
-
-        def flush(self):
-            pass
-
-    original = sys.stdout
-    sys.stdout = Tee()
+    done = failed = 0
     try:
-        print(f"--- start {stamp}, currencies {', '.join(CURRENCIES)} ---")
-        fetch_free_archive(currencies=CURRENCIES)
-        print(f"--- done {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M:%SZ} ---")
+        for day in free_days():
+            paths = {
+                c: HIST_DIR / f"{c.lower()}_chain_{day:%Y%m%d}.parquet"
+                for c in CURRENCIES
+            }
+            todo = [c for c in CURRENCIES if not paths[c].exists()]
+            if not todo:
+                continue
+
+            for attempt, wait in enumerate((0.0, *BACKOFF_SECONDS)):
+                if wait:
+                    _log(f"{day}  rate limited, waiting {wait:.0f}s "
+                         f"(attempt {attempt})")
+                    time.sleep(wait)
+                try:
+                    frames = load_day_multi(day, 60, todo)
+                    for currency, frame in frames.items():
+                        frame.to_parquet(paths[currency], index=False)
+                        _log(f"{day}  {currency:4s} {len(frame):6d} rows  "
+                             f"{frame['expiry_ts'].nunique():2d} expiries")
+                    done += 1
+                    break
+                except requests.HTTPError as exc:
+                    if exc.response is not None and exc.response.status_code == 429:
+                        continue
+                    _log(f"{day}  FAILED: {exc}")
+                    failed += 1
+                    break
+                except (requests.RequestException, RuntimeError, OSError) as exc:
+                    _log(f"{day}  FAILED: {exc}")
+                    failed += 1
+                    break
+            else:
+                _log(f"{day}  still rate limited after "
+                     f"{len(BACKOFF_SECONDS)} retries -- stopping so the "
+                     f"remaining days stay untried")
+                break
+
+            time.sleep(DELAY_SECONDS)
+
+        _log(f"--- done {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M:%SZ}, "
+             f"{done} day(s) fetched, {failed} failed ---")
         return 0
     except Exception:  # noqa: BLE001 - the log is the only error channel here
-        print("--- FAILED ---")
-        print(traceback.format_exc())
+        _log("--- FAILED ---")
+        _log(traceback.format_exc())
         return 1
-    finally:
-        sys.stdout = original
 
 
 def start() -> int:
