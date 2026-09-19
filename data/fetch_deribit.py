@@ -211,7 +211,14 @@ def write_snapshot(
     raw_dir.mkdir(parents=True, exist_ok=True)
     stamp = frame["timestamp"].iloc[0].strftime("%Y%m%dT%H%M%SZ")
     path = raw_dir / f"{currency.lower()}_chain_{stamp}.parquet"
-    frame.to_parquet(path, index=False)
+    # Written beside the target and renamed into place, so no reader can see
+    # a half-written file. On 18 September the watchdog and the collector
+    # both fired on wake within two seconds, and the watchdog read a snapshot
+    # mid-write and reported it corrupt. The temporary name does not match
+    # `*_chain_*.parquet`, so every glob in the project skips it.
+    tmp = path.with_name(path.name + ".tmp")
+    frame.to_parquet(tmp, index=False)
+    tmp.replace(path)
     return path
 
 

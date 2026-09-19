@@ -218,6 +218,47 @@ def logs(lines: int = 20) -> int:
     return 0
 
 
+NETWORK_WAIT_SECONDS = 120
+NETWORK_POLL_SECONDS = 5
+
+
+def wait_for_network(host: str = "www.deribit.com", port: int = 443,
+                     limit: float = NETWORK_WAIT_SECONDS,
+                     poll: float = NETWORK_POLL_SECONDS) -> float | None:
+    """
+    Block until `host` accepts a TCP connection; return seconds waited, or
+    None if it never did within `limit`.
+
+    The catch-up run fires the moment the laptop wakes, before Wi-Fi has
+    reconnected. The fetch retries give up after about three seconds, so on
+    18 and 19 September every book failed on wake and each catch-up snapshot
+    -- an hour that can never be collected again -- was lost. The network
+    takes tens of seconds to return; waiting for it costs nothing on a
+    normal run, where the first probe succeeds at once.
+    """
+    import socket
+    import time
+
+    start = time.monotonic()
+    while True:
+        try:
+            socket.create_connection((host, port), timeout=poll).close()
+            return time.monotonic() - start
+        except OSError:
+            if time.monotonic() - start + poll > limit:
+                return None
+            time.sleep(poll)
+
+
+def _describe(exc: BaseException) -> str:
+    """The error and its root cause: 'failed after 3 attempts' alone says nothing."""
+    text = f"{type(exc).__name__}: {exc}"
+    cause = exc.__cause__
+    if cause is not None:
+        text += f" <- {type(cause).__name__}: {str(cause)[:160]}"
+    return text
+
+
 def run_once() -> int:
     """
     One snapshot per collected currency, appending a line each to the log.
@@ -231,6 +272,13 @@ def run_once() -> int:
 
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     lines, code = [], 0
+    waited = wait_for_network()
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    if waited is None:
+        lines.append(f"{stamp}   note  network unreachable after "
+                     f"{NETWORK_WAIT_SECONDS}s; attempting anyway")
+    elif waited >= 1:
+        lines.append(f"{stamp}   note  waited {waited:.0f}s for the network (woke from sleep?)")
     for currency in COLLECT_CURRENCIES:
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
         try:
@@ -243,7 +291,7 @@ def run_once() -> int:
                 f"{frame['underlying_asset'].nunique()} underlying  {path.name}"
             )
         except Exception as exc:  # noqa: BLE001 - the log is the error channel
-            lines.append(f"{stamp}  {currency:>5}  FAIL  {type(exc).__name__}: {exc}")
+            lines.append(f"{stamp}  {currency:>5}  FAIL  {_describe(exc)}")
             traceback.print_exc()
             code = 1
 
