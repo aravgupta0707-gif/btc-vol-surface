@@ -45,6 +45,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pacsv
 import requests
+import urllib3
 
 BASE_URL = "https://datasets.tardis.dev/v1/deribit/options_chain"
 HIST_DIR = Path(__file__).resolve().parent / "historical"
@@ -92,6 +93,46 @@ def free_days(until: dt.date | None = None) -> list[dt.date]:
             days.append(day)
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
     return days
+
+
+class _RawBody:
+    """
+    The response body as a file for Arrow, with urllib3's errors translated.
+
+    Arrow reads `response.raw` directly, which bypasses the layer where
+    requests wraps urllib3 exceptions. A connection reset mid-transfer then
+    surfaces as a bare `urllib3.exceptions.ProtocolError` -- not a
+    RequestException, not an OSError -- and escapes every handler written
+    against requests. That ended a run on 2026-09-10 and left the archive
+    idle for three days. Translating here keeps the whole module speaking
+    one exception vocabulary.
+    """
+
+    def __init__(self, raw) -> None:
+        self._raw = raw
+        self.closed = False
+
+    def read(self, nbytes: int = -1) -> bytes:
+        try:
+            return self._raw.read(nbytes)
+        except urllib3.exceptions.HTTPError as exc:
+            raise requests.ConnectionError(exc) from exc
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def write_parquet_atomic(frame: pd.DataFrame, path: Path) -> None:
+    """
+    Write via a temporary file and rename into place.
+
+    Every resumable loop here treats an existing file as a finished day. A
+    process killed mid-write -- a laptop lid, a task time limit -- would
+    otherwise leave a truncated parquet that is skipped forever.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    frame.to_parquet(tmp, index=False)
+    tmp.replace(path)
 
 
 def day_url(day: dt.date) -> str:
@@ -153,7 +194,9 @@ def load_day_multi(
         day_url(day), headers=_HEADERS, stream=True, timeout=1800
     ) as response:
         response.raise_for_status()
-        stream = pa.CompressedInputStream(pa.PythonFile(response.raw), "gzip")
+        stream = pa.CompressedInputStream(
+            pa.PythonFile(_RawBody(response.raw), mode="r"), "gzip"
+        )
         reader = pacsv.open_csv(
             stream,
             read_options=pacsv.ReadOptions(block_size=_BLOCK_BYTES),
@@ -290,7 +333,7 @@ def fetch_free_archive(
             continue
         for currency, frame in frames.items():
             path = paths[currency]
-            frame.to_parquet(path, index=False)
+            write_parquet_atomic(frame, path)
             written.append(path)
             print(
                 f"{day}  {currency:4s} {len(frame):6d} rows  "
