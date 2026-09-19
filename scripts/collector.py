@@ -220,6 +220,7 @@ def logs(lines: int = 20) -> int:
 
 NETWORK_WAIT_SECONDS = 120
 NETWORK_POLL_SECONDS = 5
+COLLECT_RETRY_WAITS = (0, 20, 60)
 
 
 def wait_for_network(host: str = "www.deribit.com", port: int = 443,
@@ -252,10 +253,18 @@ def wait_for_network(host: str = "www.deribit.com", port: int = 443,
 
 def _describe(exc: BaseException) -> str:
     """The error and its root cause: 'failed after 3 attempts' alone says nothing."""
-    text = f"{type(exc).__name__}: {exc}"
-    cause = exc.__cause__
-    if cause is not None:
-        text += f" <- {type(cause).__name__}: {str(cause)[:160]}"
+    # The innermost cause is the diagnosis; the wrappers above it only say
+    # that something failed. requests nests three deep, and the first version
+    # of this truncated the chain just before the part that mattered.
+    root = exc
+    while True:
+        nxt = getattr(root, "reason", None) if not root.__cause__ else root.__cause__
+        if not isinstance(nxt, BaseException) or nxt is root:
+            break
+        root = nxt
+    text = f"{type(exc).__name__}: {str(exc)[:80]}"
+    if root is not exc:
+        text += f" <- root cause {type(root).__name__}: {str(root)[-240:]}"
     return text
 
 
@@ -279,21 +288,36 @@ def run_once() -> int:
                      f"{NETWORK_WAIT_SECONDS}s; attempting anyway")
     elif waited >= 1:
         lines.append(f"{stamp}   note  waited {waited:.0f}s for the network (woke from sleep?)")
-    for currency in COLLECT_CURRENCIES:
-        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-        try:
-            from data.fetch_deribit import snapshot_chain, write_snapshot
+    import time
 
-            frame = snapshot_chain(currency)
-            path = write_snapshot(frame, currency=currency)
-            lines.append(
-                f"{stamp}  {currency:>5}  ok    {len(frame):5d} instruments  "
-                f"{frame['underlying_asset'].nunique()} underlying  {path.name}"
-            )
-        except Exception as exc:  # noqa: BLE001 - the log is the error channel
-            lines.append(f"{stamp}  {currency:>5}  FAIL  {_describe(exc)}")
-            traceback.print_exc()
-            code = 1
+    for currency in COLLECT_CURRENCIES:
+        # The fetch's own retries span ~3 seconds, too short to outlast a
+        # blip; on 19 September a run failed all three books with the network
+        # up, and the same call succeeded ten minutes later. An hour missed is
+        # missed for good, so each book gets two more tries a minute apart --
+        # at most ~80s added, well inside the task's 10-minute limit.
+        for attempt, wait in enumerate(COLLECT_RETRY_WAITS):
+            if wait:
+                time.sleep(wait)
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+            try:
+                from data.fetch_deribit import snapshot_chain, write_snapshot
+
+                frame = snapshot_chain(currency)
+                path = write_snapshot(frame, currency=currency)
+                retried = f"  (after {attempt} retr{'y' if attempt == 1 else 'ies'})" \
+                    if attempt else ""
+                lines.append(
+                    f"{stamp}  {currency:>5}  ok    {len(frame):5d} instruments  "
+                    f"{frame['underlying_asset'].nunique()} underlying  {path.name}{retried}"
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - the log is the error channel
+                if attempt < len(COLLECT_RETRY_WAITS) - 1:
+                    continue
+                lines.append(f"{stamp}  {currency:>5}  FAIL  {_describe(exc)}")
+                traceback.print_exc()
+                code = 1
 
     with LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")

@@ -84,3 +84,52 @@ class TestAtomicSnapshot:
         assert path.name == "btc_chain_20260919T184602Z.parquet"
         assert len(pd.read_parquet(path)) == 1
         assert list(tmp_path.iterdir()) == [path]
+
+
+class TestRunOnceRetries:
+    def test_a_transient_failure_is_retried_and_the_snapshot_kept(self, monkeypatch, tmp_path):
+        import data.fetch_deribit as fd
+
+        calls = {"n": 0}
+
+        def flaky(currency):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("get_book_summary_by_currency failed after 3 attempts")
+            return pd.DataFrame({
+                "timestamp": pd.to_datetime(["2026-09-19 18:46:02"], utc=True),
+                "underlying_asset": [currency], "strike": [80_000.0],
+            })
+
+        monkeypatch.setattr(fd, "snapshot_chain", flaky)
+        # write_snapshot's default directory is bound at definition time, so
+        # patching RAW_DIR does not redirect it -- the first version of this
+        # test wrote a one-row "snapshot" into the real data/raw.
+        real_write = fd.write_snapshot
+        monkeypatch.setattr(fd, "write_snapshot",
+                            lambda frame, currency: real_write(frame, tmp_path, currency))
+        monkeypatch.setattr(collector, "LOG_PATH", tmp_path / "collector.log")
+        monkeypatch.setattr(collector, "COLLECT_CURRENCIES", ("BTC",))
+        monkeypatch.setattr(collector, "wait_for_network", lambda: 0.0)
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        assert collector.run_once() == 0
+        log = (tmp_path / "collector.log").read_text()
+        assert "ok" in log and "after 1 retry" in log and "FAIL" not in log
+
+    def test_a_persistent_failure_is_logged_once_with_its_root_cause(self, monkeypatch, tmp_path):
+        import data.fetch_deribit as fd
+
+        def down(currency):
+            try:
+                raise ConnectionError("Failed to resolve 'www.deribit.com'")
+            except ConnectionError as inner:
+                raise RuntimeError("failed after 3 attempts") from inner
+
+        monkeypatch.setattr(fd, "snapshot_chain", down)
+        monkeypatch.setattr(collector, "LOG_PATH", tmp_path / "collector.log")
+        monkeypatch.setattr(collector, "COLLECT_CURRENCIES", ("BTC",))
+        monkeypatch.setattr(collector, "wait_for_network", lambda: 0.0)
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        assert collector.run_once() == 1
+        log = (tmp_path / "collector.log").read_text()
+        assert log.count("FAIL") == 1 and "Failed to resolve" in log
