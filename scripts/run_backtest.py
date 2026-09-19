@@ -122,7 +122,7 @@ def main() -> int:
           f"sold at {position.entry_iv * 100:.2f}% vol")
     print(f"spot {position.entry_spot:,.0f} -> {result['spot'].iloc[-1]:,.0f}")
 
-    print("\nP&L decomposition (USD, 1 BTC notional per leg)")
+    print(f"\nP&L decomposition (USD, 1 {asset} notional per leg)")
     print(f"  premium received      {position.premium_received:+12,.2f}")
     print(f"  cost to buy back      {-position.option_value:+12,.2f}")
     print(f"  = option leg          {out['option_pnl']:+12,.2f}")
@@ -153,14 +153,20 @@ def main() -> int:
         ratio = gross / theoretical
         verdict = "tracks" if 0.5 <= ratio <= 2.0 else "DOES NOT TRACK -- investigate"
         print(f"  ratio                 {ratio:8.2f}   {verdict}")
-    sign_ok = np.sign(out["variance_gap"]) == np.sign(out["total_pnl"])
+    # Gross, like the ratio above. Comparing the net total instead flagged a
+    # thin edge eaten by costs as a hedging failure (ETH, 13 Sep 2026: gross
+    # +8.28 against a positive gap, net -1.13) -- and a gate that cries wolf
+    # teaches people to skip the line. Costs get their own verdict below.
+    sign_ok = np.sign(out["variance_gap"]) == np.sign(gross)
     print(f"  P&L sign matches gap  {'yes' if sign_ok else 'NO -- investigate'}")
+    if sign_ok and np.sign(out["total_pnl"]) != np.sign(gross):
+        print("  costs exceed the edge  net P&L has the opposite sign to gross")
 
     print("\nactivity")
     print(f"  rebalances            {out['rebalances']:8d}")
-    print(f"  turnover              {out['turnover_btc']:8.3f} BTC")
+    print(f"  turnover              {out['turnover_btc']:8.3f} {asset}")
     print(f"  hedge range           {result['hedge_units'].min():+.3f} to "
-          f"{result['hedge_units'].max():+.3f} BTC")
+          f"{result['hedge_units'].max():+.3f} {asset}")
 
     print("\nstep statistics (descriptive only -- far too few steps to size on)")
     print(f"  steps                 {out['n']:8d}")
