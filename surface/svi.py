@@ -72,6 +72,20 @@ _M_PAD = 0.5
 # faster without changing any result.
 _CONVERGED = 1e-14
 
+# A fit that keeps hitting the constrained fallback is not converging on a
+# smile; it is being pushed along a constraint boundary because the quotes
+# do not pin one down. Measured over 208 slices on 24 archive days, a normal
+# fit needs at most 167 fallback solves (median 2). The 11Dec20 slice of
+# 2020-12-01 -- calls only, vol rising 78% -> 118% with a 10-point jump
+# between the last put and the first call -- sent 84% of evaluations down
+# the fallback at 83 ms each and would have run for half an hour, stalling a
+# whole study. Three times the worst normal fit, then refuse.
+_MAX_FALLBACKS = 500
+
+
+class _FitBudgetExceeded(Exception):
+    pass
+
 # Reported on every fit as `wing_slope_ratio`: how much steeper the fitted
 # asymptotic wings are than the steepest slope the quotes actually show.
 # A diagnostic for how far a slice can be trusted outside its quoted range,
@@ -107,7 +121,8 @@ def _feasible(a: float, d: float, c: float, tol: float = 1e-9) -> bool:
 
 
 def _solve_inner(
-    y: "np.ndarray", w: "np.ndarray", weights: "np.ndarray"
+    y: "np.ndarray", w: "np.ndarray", weights: "np.ndarray",
+    fallbacks: list | None = None,
 ) -> tuple[np.ndarray, float]:
     """
     Exact least-squares solution for (a, d, c) at fixed (m, sigma).
@@ -125,6 +140,11 @@ def _solve_inner(
     if _feasible(*solution):
         residual = scaled_design @ solution - scaled_target
         return solution, float(residual @ residual)
+
+    if fallbacks is not None:
+        fallbacks.append(1)
+        if len(fallbacks) > _MAX_FALLBACKS:
+            raise _FitBudgetExceeded
 
     def cost(p):
         residual = scaled_design @ p - scaled_target
@@ -192,11 +212,13 @@ def fit_svi_slice(
         else np.asarray(weights, dtype=float)[finite]
     )
 
+    fallbacks: list = []
+
     def outer_cost(params) -> float:
         m, sigma = params
         if not (_SIGMA_BOUNDS[0] <= sigma <= _SIGMA_BOUNDS[1]):
             return 1e12
-        _, cost = _solve_inner((k - m) / sigma, w, weights)
+        _, cost = _solve_inner((k - m) / sigma, w, weights, fallbacks)
         return cost
 
     # Multi-start over (m, sigma). The outer surface is smooth but not
@@ -213,6 +235,19 @@ def fit_svi_slice(
         _SIGMA_BOUNDS,
     ]
 
+    try:
+        best, _ = _multistart(outer_cost, starts, bounds)
+    except _FitBudgetExceeded:
+        return {
+            "ok": False, "n": int(len(k)),
+            "reason": (f"did not settle: over {_MAX_FALLBACKS} constrained solves "
+                       f"(a normal fit needs under 170) -- the quotes do not "
+                       f"determine a smile"),
+        }
+    return _finish(k, w, weights, best)
+
+
+def _multistart(outer_cost, starts, bounds) -> tuple:
     best, best_cost = None, np.inf
     for start in starts:
         # Nelder-Mead rather than L-BFGS-B. The inner solve switches between
@@ -229,7 +264,11 @@ def fit_svi_slice(
             best, best_cost = result.x, float(result.fun)
         if best_cost < _CONVERGED:
             break
+    return best, best_cost
 
+
+def _finish(k, w, weights, best) -> dict:
+    """The exact inner solve at the best (m, sigma), and the refusal checks."""
     m, sigma = float(best[0]), float(best[1])
     (a, d, c), cost = _solve_inner((k - m) / sigma, w, weights)
     b = c / sigma

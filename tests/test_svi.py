@@ -265,3 +265,26 @@ class TestSurfaceFit:
     def test_results_are_ordered_by_maturity(self):
         slices = {1.0: synth(), 0.1: synth(), 0.5: synth()}
         assert list(fit_svi_surface(slices)) == [0.1, 0.5, 1.0]
+
+
+class TestFitBudget:
+    # The real 11Dec20 slice from the 2020-12-01 archive chain: calls only,
+    # vol rising 78% -> 118%, with a 10-point jump between the last put and
+    # the first call. Unbudgeted, the fit ran for half an hour and stalled
+    # the surface study; the quotes do not determine a smile.
+    K = [-0.077537, -0.06359, -0.050335, -0.037089, -0.02385, -0.011039, 0.0019,
+         0.014478, 0.026901, 0.039171, 0.051292, 0.063161, 0.075103, 0.086799,
+         0.098253, 0.109788, 0.120621, 0.131813, 0.142859, 0.153966, 0.164777]
+    W = [0.0171505, 0.0178169, 0.0178155, 0.0181462, 0.018593, 0.0191184,
+         0.0237247, 0.0242559, 0.0254726, 0.027253, 0.0279577, 0.0290271,
+         0.0303949, 0.0315309, 0.0326834, 0.0339716, 0.035197, 0.0361226,
+         0.0374528, 0.0386931, 0.0397388]
+
+    def test_replay_an_undeterminable_slice_is_refused_promptly(self):
+        import time
+
+        start = time.time()
+        fit = fit_svi_slice(np.array(self.K), np.array(self.W))
+        assert not fit["ok"]
+        assert "did not settle" in fit["reason"]
+        assert time.time() - start < 120
