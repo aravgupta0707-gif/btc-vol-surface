@@ -1,7 +1,8 @@
 # Handoff
 
 Everything needed to pick this project up cold. Written 2026-09-09, updated
-2026-09-20 after the archive completed and the six-year studies ran (§10).
+2026-09-20 after the archive completed, the six-year studies ran (§10), and
+the hedging-frequency sweep answered §7 step 1 (§12).
 
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
 per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. This file is the
@@ -11,8 +12,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **348 tests, 28
-commits, 9,294 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **368 tests, 30
+commits, 10,052 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -23,7 +24,8 @@ commits, 9,294 lines of Python, zero remaining stubs.**
 | Surface object | done | `verify_surface.py` — 10/10 |
 | Greeks + validation | done | delta matches Deribit to 0.0007 median |
 | Strategy + backtest | **done** | 79-day study, 316 positions — §10 |
-| Write-up | **this file, §10** | — |
+| Costs + hedging frequency | **done** | 48-cell sweep, measured spreads — §12 |
+| Write-up | **this file, §10 and §12** | — |
 | Dashboard | **not started** | — |
 
 The statistical claim that §5 used to call open is now answered, and the
@@ -47,6 +49,7 @@ python scripts/vrp_surface.py        # premium by strike and tenor  [~25 min]
 python scripts/cross_asset.py        # BTC vs ETH (needs vrp_surface first)
 python scripts/carry_study.py        # forward curve vs funding
 python scripts/hold_to_expiry.py     # Track A, settled at expiry  [~4 min]
+python scripts/hedge_frequency.py run   # hedging frequency vs cost  [~3 min]
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
 
@@ -338,10 +341,13 @@ period there is none even before costs (t 0.1-0.7). What survives in
 month**, against an entry spread of ~18 bps and hedge slippage anywhere
 from 10 to 60 bps depending on rebalancing frequency. So the surviving
 premium is about the size of realistic costs, and **hedging frequency, not
-the premium, decides the outcome.** That is the next thing to measure.
+the premium, decides the outcome.** §12 measured it: the premium clears the
+option spread (+73 bps, t 2.4) and dies on the hedge — best case +33 bps at
+t 0.9, hedging every 6h with 5 bps of slippage, negative at 10 bps.
 
 **Every study price is a mid.** No study charges the bid-ask on the option
-except `hold_to_expiry` (entry only) and `archive_study` (both sides). Wing
+except `hold_to_expiry` (entry only), `archive_study` (both sides) and
+`hedge_frequency` (entry, measured per strike from the archive's own book). Wing
 spreads on Deribit are wide, so the call-wing premium in §10 is the most
 cost-exposed result in the file.
 
@@ -409,13 +415,10 @@ periods and not others. `python scripts/health.py` runs every check now;
 
 In priority order:
 
-1. **Hedging-frequency study.** The one surviving result (BTC 30-day ATM
-   and call wing, ~83 bps a month) is the same size as its costs, and
-   slippage scales with rebalancing while hedging error scales against it.
-   Run `vrp_surface` at 1h / 4h / 12h / daily hedging with the spread and
-   5 bps slippage charged, and see whether any frequency leaves a positive
-   number. This is the difference between "a premium exists" and "it can be
-   collected", and everything needed is already on disk.
+1. ~~**Hedging-frequency study.**~~ **DONE — see §12.** The answer is that
+   the premium survives the option spread and dies on the hedge. There is a
+   real optimum at 4–6h, but its best case is +33 bps at t 0.9, and 10 bps
+   of slippage is negative at every frequency.
 2. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads,
    and an entry rule on the spread's own history. It is the largest effect
@@ -731,3 +734,103 @@ sleep gap (max 13h) are marked, because a real book would not have one.
 - Long-running jobs: `| tail` buffers everything until EOF, and Python
   buffers stdout when redirected. Use `python -u` and no pipe, or the output
   file stays empty and the job looks hung.
+
+---
+
+## 12. Hedging frequency vs cost (§7 step 1)
+
+`scripts/hedge_frequency.py`, 18 tests. Answers the question §5 left open:
+the surviving premium is about the size of realistic costs, so does *any*
+rebalancing frequency leave a positive number?
+
+Two stages, because the expensive part is not the part being swept. Fitting
+a day's surface is ~98% of the compute and depends on no swept parameter, so
+stage 1 calibrates each of the 158 archive days once and banks the SVI
+parameters plus a measured half-spread curve; stage 2 sweeps the grid over
+that cache. Local cost: **2m31s to fit, 46s for all 48 cells.** Re-fitting
+per cell would have burned ~1.9 CPU-hours recomputing identical surfaces.
+
+**The option spread is measured, not assumed.** The archive carries bid and
+ask per instrument, so each expiry gets a half-spread curve in vol points,
+`(ask_usd - bid_usd) / 2 / vega`, interpolated in log-moneyness onto the
+synthetic strike and clamped at the ends like the surface itself. Measured
+half-spreads run 1.3–1.5 vol points at 8 hours to expiry down to ~0.36 at
+two months — which on a 30-day ATM straddle is ~11 bps of spot, against the
+~8.6 bps §11.5 measured independently on the live book. Only the hedge leg's
+cost is a parameter, because the hourly index carries no book to measure.
+
+At zero costs the P&L reduces to `vrp_surface`'s to the last bit — asserted
+over 50 random paths per option type in the tests, and confirmed on real
+data below, where gross at 4h comes back as **+83 bps, exactly §11.2's
+published number.** This is a cost model bolted onto that result, not a
+second calculation of it.
+
+### BTC 30-day ATM straddle, 2023-26, mean net bps of spot (t), 44 inceptions
+
+| hedge | 0 bps | 2 bps | 5 bps | 10 bps |
+|---|---|---|---|---|
+| 1h | +73 (2.4) | +43 (1.4) | -2 (-0.1) | -78 (-2.5) |
+| 2h | +74 (2.3) | +52 (1.6) | +18 (0.5) | -39 (-1.2) |
+| 4h | +72 (2.1) | +55 (1.6) | +28 (0.8) | -15 (-0.4) |
+| **6h** | +71 (1.8) | +55 (1.4) | **+33 (0.9)** | -5 (-0.1) |
+| 12h | +60 (1.4) | +48 (1.1) | +29 (0.7) | -1 (-0.0) |
+| 24h | +42 (0.9) | +32 (0.7) | +16 (0.3) | -9 (-0.2) |
+
+### Where the money goes, at 5 bps, same cell
+
+| hedge | premium | gross | spread | slippage | net | turnover |
+|---|---|---|---|---|---|---|
+| 1h | 1068 | +83 | 11 | 75 | -2 | 15.0x |
+| 4h | 1068 | +83 | 11 | 44 | +28 | 8.7x |
+| 6h | 1068 | +81 | 11 | 38 | +33 | 7.6x |
+| 24h | 1068 | +53 | 11 | 26 | +16 | 5.1x |
+
+**The premium survives the option spread and dies on the hedge.** Charging
+the measured spread alone leaves +73 bps at t 2.4 — still significant. Five
+bps of hedge slippage takes 38–75 bps of that depending on frequency, and
+the t never gets back above 1. The optimum is real and sits where theory
+says (4–6h: turnover has fallen 2x from hourly while gross has only given
+up 2 bps), but a best case of **+33 bps at t 0.9** is not a trade.
+
+Ten bps is negative at every frequency. Hourly hedging is the worst cell in
+the table at 15x turnover — it spends 75 bps to collect 83.
+
+The rest, briefly: **BTC 7-day** 2023-26 is flat-to-negative everywhere.
+**The BTC call wing** — the other 2023-26 survivor in §11.2 — does not clear
+costs either, best case +3 bps (t 0.2) at 6–12h. **ETH** is negative nearly
+everywhere in 2023-26, down to -128 bps at 1h / 10 bps. **2020-22 is the
+exception that holds**: BTC 7-day ATM keeps +143 bps (t 2.4) at 5 bps, and
+the call wing +53 (t 3.1). The trade worked then and does not now, which is
+what every other study in this file also says.
+
+So §5's phrasing was right: hedging frequency decides the outcome. It just
+decides it negatively at 2023-26 premium levels, unless hedge slippage is
+genuinely under ~2 bps.
+
+### Running it
+
+```bash
+python scripts/hedge_frequency.py run      # fit + sweep + report, 2m52s
+python scripts/hedge_frequency.py report   # re-print from saved cells
+```
+
+`run` owns `data/research/hedge_fits` and `hedge_cells` and clears them
+first. Both loaders refuse a cache holding shards from two different runs
+rather than averaging it — globbed together, every day is counted twice, the
+means barely move and the t-statistics inflate by ~sqrt(2).
+
+**Run it locally.** Measured throughput is ~1.05 archive-day/s for the fit
+and ~1.04 sweep-cell/s at `--workers 4`, so projected minutes are about
+`(days + cells) / 60`. The default grid is ~3 minutes and the 128-cell
+widened grid is ~5; it takes roughly 1,700 cells — a new strike or tenor
+axis, not finer hedging — before a cluster beats sitting through it.
+
+For when it does: `bash slurm/submit.sh` runs two Slurm array jobs chained
+with `afterok`, grid axes overridable from the environment
+(`HEDGE_HOURS="1 2 3 4 6 8 12 24" bash slurm/submit.sh`). Verified by
+simulating a 4-way fit array and an 8-way sweep array locally — identical
+slice counts, row counts and report. See `slurm/README.md` for what must be
+rsynced across (the data directories are all gitignored) and why
+`data/history.py` grew an `offline=True` path: compute nodes have no
+outbound network, and the cache normally tops itself up from Deribit on
+every call.

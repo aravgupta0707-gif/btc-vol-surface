@@ -8,3 +8,4 @@ data/raw/
 .DS_Store
 .claude/
 data/research/
+slurm/logs/

@@ -1,0 +1,6 @@
+# This repo is developed on Windows with core.autocrlf=true, which rewrites
+# text files to CRLF on checkout. A shell script with CRLF fails on Linux with
+# "bad interpreter: /bin/bash^M", so anything destined for a cluster login node
+# is pinned to LF regardless of the platform it is checked out on.
+*.sh     text eol=lf
+*.slurm  text eol=lf

@@ -81,8 +81,18 @@ def _candle_page(asset: str, a: dt.datetime, b: dt.datetime) -> pd.DataFrame:
 
 
 def _cached(name: str, fetch_page, asset: str, step: dt.timedelta,
-            refresh: bool) -> pd.DataFrame:
+            refresh: bool, offline: bool = False) -> pd.DataFrame:
     path = CACHE / f"{asset.lower()}_{name}_hourly.parquet"
+    if offline:
+        # Cluster compute nodes have no outbound network. Without this the
+        # call below would retry four times and then raise a connection
+        # error, which reads as a data problem rather than a missing route.
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{path} absent and offline=True: copy it from a machine "
+                "that can reach Deribit before running here"
+            )
+        return pd.read_parquet(path)
     have = pd.read_parquet(path) if path.exists() and not refresh else pd.DataFrame()
     start = START if have.empty else have["time"].max().to_pydatetime()
     end = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
@@ -96,12 +106,18 @@ def _cached(name: str, fetch_page, asset: str, step: dt.timedelta,
     return frame
 
 
-def hourly_funding(asset: str, refresh: bool = False) -> pd.DataFrame:
-    """time, index_price, interest_1h, interest_8h -- one row per hour."""
-    return _cached("funding", _funding_page, asset, FUNDING_PAGE, refresh)
+def hourly_funding(asset: str, refresh: bool = False,
+                   offline: bool = False) -> pd.DataFrame:
+    """
+    time, index_price, interest_1h, interest_8h -- one row per hour.
+
+    `offline=True` returns the cache untouched and never opens a socket.
+    """
+    return _cached("funding", _funding_page, asset, FUNDING_PAGE, refresh, offline)
 
 
-def hourly_candles(asset: str, refresh: bool = False) -> pd.DataFrame:
+def hourly_candles(asset: str, refresh: bool = False,
+                   offline: bool = False) -> pd.DataFrame:
     """
     time, open, high, low, close of the perpetual -- one row per hour.
 
@@ -111,7 +127,7 @@ def hourly_candles(asset: str, refresh: bool = False) -> pd.DataFrame:
     the basis is ~2 bps median, 16-19 bps at the 99th. Using `close` at its
     stamp is a one-hour lookahead. Studies here use the index instead.
     """
-    return _cached("perp", _candle_page, asset, CANDLE_PAGE, refresh)
+    return _cached("perp", _candle_page, asset, CANDLE_PAGE, refresh, offline)
 
 
 def missing_hours(frame: pd.DataFrame) -> int:
