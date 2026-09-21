@@ -571,15 +571,178 @@ def _best_by_cost(ok) -> None:
                       f"({best['band'][2]:>+4.0f})  {gain:>+6.0f}")
 
 
+# ---- walk-forward: choose the rule without hindsight --------------------
+
+def settled_history(dates, as_of, tenor_days: int):
+    """
+    Inceptions whose outcome was *known* by `as_of`.
+
+    Not "earlier inceptions" -- a 30-day position opened one month before
+    `as_of` settles within hours of it, so its P&L was not available to choose
+    with. Requiring inception + tenor < as_of costs one observation and is the
+    difference between a walk-forward and a very slightly clairvoyant one.
+    """
+    return dates[dates + pd.Timedelta(days=tenor_days) < as_of]
+
+
+def walk_forward(sub, rules: list, tenor_days: int, warmup: int = 6):
+    """
+    Pick the rule that did best on settled history, then use it once, blind.
+
+    Returns one row per inception that had enough history: the rule chosen, and
+    what that rule actually went on to earn. The choice at each date sees only
+    outcomes that had settled, so nothing here is fitted to the P&L it reports.
+    """
+    table = sub.pivot_table(index="date", columns="policy", values="net_bps")
+    keep = [r for r in rules if r in table.columns]
+    if not keep:
+        return pd.DataFrame(columns=["date", "chosen", "net_bps"])
+    table = table[keep].sort_index()
+
+    rows = []
+    for as_of in table.index:
+        history = table.loc[settled_history(table.index, as_of, tenor_days)]
+        history = history.dropna(how="all")
+        if len(history) < warmup:
+            continue
+        chosen = history.mean().idxmax()
+        realised = table.loc[as_of, chosen]
+        if pd.notna(realised):
+            rows.append({"date": as_of, "chosen": chosen, "net_bps": float(realised)})
+    return pd.DataFrame(rows)
+
+
+def _walk_forward_block(sub, tenor_days: int, label: str, warmup: int) -> None:
+    """One (asset, tenor, strike-set) block: every selection scheme, same dates."""
+    families = {
+        "all 16 rules": [lab for _, _, lab in policies()],
+        "clocks only": [lab for k, _, lab in policies() if k == "time"],
+        "bands only": [lab for k, _, lab in policies() if k != "time"],
+        "ww only": [lab for k, _, lab in policies() if k == "whalley_wilmott"],
+    }
+    chosen_sets = {name: walk_forward(sub, rules, tenor_days, warmup)
+                   for name, rules in families.items()}
+    dated = [frame for frame in chosen_sets.values() if not frame.empty]
+    if not dated:
+        return
+    # Every scheme, and every fixed comparator, is judged on exactly the dates
+    # the walk-forward could reach. Scoring a hindsight rule over a longer
+    # sample than the one that had to warm up would flatter it for free.
+    common = sorted(set.intersection(*[set(f["date"]) for f in dated]))
+    if not common:
+        return
+    table = sub.pivot_table(index="date", columns="policy", values="net_bps")
+    table = table.loc[[d for d in table.index if d in set(common)]]
+
+    print(f"\n  {label}  ({len(common)} inceptions out of sample, warmup {warmup})")
+    print(f"    {'scheme':<16}{'net bps':>9}{'t':>7}   {'chosen most often':<28}")
+    for name, frame in chosen_sets.items():
+        if frame.empty:
+            continue
+        on_common = frame[frame["date"].isin(common)]
+        counts = on_common["chosen"].value_counts()
+        top = f"{counts.index[0]} ({counts.iloc[0]}/{len(on_common)})" if len(counts) else "-"
+        print(f"    {name:<16}{on_common['net_bps'].mean():>+9.0f}"
+              f"{_t(on_common['net_bps']):>7.1f}   {top:<28}")
+
+    hindsight = table.mean().idxmax()
+    print(f"    {'-- hindsight':<16}{table[hindsight].mean():>+9.0f}"
+          f"{_t(table[hindsight]):>7.1f}   {hindsight + ' (upper bound)':<28}")
+    for fixed in ("time 4h", "time 6h"):
+        if fixed in table.columns:
+            print(f"    {'-- fixed ' + fixed:<16}{table[fixed].mean():>+9.0f}"
+                  f"{_t(table[fixed]):>7.1f}   {'chosen a priori':<28}")
+
+
+def walk_forward_report(frame, warmup: int = 6) -> None:
+    ok = frame[(frame["skipped"] == "") & frame["supported"].fillna(False)]
+    print(f"\n{'=' * 78}")
+    print("CHOOSING THE RULE WITHOUT HINDSIGHT")
+    print(f"{'=' * 78}")
+    print("At each inception the rule is whichever did best on history that had already")
+    print("settled; it is then used once, blind. Compared against the rule that wins in")
+    print("hindsight (§12.1's number, an upper bound) and against a clock fixed a priori.")
+
+    for slip in sorted(ok["slip_bps"].unique()):
+        if slip == 0:
+            continue                      # nothing to economise on; rules coincide
+        print(f"\n{'-' * 78}\n{slip:.0f} bps hedge slippage")
+        for asset in ASSETS:
+            for days in TENOR_DAYS:
+                base = ok[(ok["asset"] == asset) & (ok["tenor"] == days)
+                          & (ok["slip_bps"] == slip)]
+                if base.empty:
+                    continue
+                atm = base[base["z"] == 0.0]
+                if not atm.empty:
+                    _walk_forward_block(atm, days, f"{asset} {days}-day ATM", warmup)
+
+    print(f"\n{'=' * 78}")
+    print("A scheme beats the a-priori clock only if selection paid for itself. The")
+    print("hindsight row is not achievable -- it is there to show how much of §12.1's")
+    print("level was the rule and how much was knowing which rule in advance.")
+    _warmup_sensitivity(ok)
+
+
+def _warmup_sensitivity(ok, warmups=(3, 6, 12, 18)) -> None:
+    """
+    Does selection pay, and does that answer survive the warmup?
+
+    The warmup is an arbitrary choice, so a single value is a single draw. This
+    prints the gap between within-family selection and the best clock fixed a
+    priori, across warmups: a gap that changes sign is selection noise wearing
+    a result's clothes, and one that holds is worth something.
+    """
+    print(f"\n{'=' * 78}")
+    print("ROBUSTNESS: ww-only walk-forward minus the better a-priori clock (bps)")
+    print(f"{'=' * 78}")
+    clocks = [lab for k, _, lab in policies() if k == "time"]
+    ww = [lab for k, _, lab in policies() if k == "whalley_wilmott"]
+    print(f"  {'block':<18}{'slip':>5}" + "".join(f"{'w=' + str(w):>8}" for w in warmups)
+          + f"{'verdict':>12}")
+    for asset in ASSETS:
+        for days in TENOR_DAYS:
+            for slip in sorted(ok["slip_bps"].unique()):
+                if slip == 0:
+                    continue
+                sub = ok[(ok["asset"] == asset) & (ok["tenor"] == days)
+                         & (ok["slip_bps"] == slip) & (ok["z"] == 0.0)]
+                if sub.empty:
+                    continue
+                table = sub.pivot_table(index="date", columns="policy", values="net_bps")
+                gaps = []
+                for warmup in warmups:
+                    picked = walk_forward(sub, ww, days, warmup)
+                    if picked.empty:
+                        gaps.append(float("nan"))
+                        continue
+                    on = table.loc[[d for d in table.index if d in set(picked["date"])]]
+                    best_clock = max(on[c].mean() for c in clocks if c in on.columns)
+                    gaps.append(picked["net_bps"].mean() - best_clock)
+                finite = [g for g in gaps if g == g]
+                verdict = ("--" if not finite
+                           else "holds" if all(g > 0 for g in finite)
+                           else "never" if all(g <= 0 for g in finite) else "flips")
+                print(f"  {asset + ' ' + str(days) + 'd ATM':<18}{slip:>5.0f}"
+                      + "".join(f"{g:>+8.0f}" for g in gaps) + f"{verdict:>12}")
+    print("\n'flips' means the sign depends on the warmup, which is not a result.")
+
+
 # ---- cli ----------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="hedging frequency vs cost")
-    parser.add_argument("stage", choices=("fit", "sweep", "report", "run"))
+    parser.add_argument("stage", choices=("fit", "sweep", "report", "run", "walkforward"))
     parser.add_argument("--shard", help="i/n -- this task's slice of the work")
     parser.add_argument("--asset", choices=ASSETS, help="fit stage: one asset only")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--warmup", type=int, default=6,
+                        help="walkforward: settled inceptions required before choosing")
     args = parser.parse_args()
+
+    if args.stage == "walkforward":
+        walk_forward_report(load_cells(), args.warmup)
+        return 0
 
     if args.stage == "run":
         # `run` means the whole study from scratch, so it owns these

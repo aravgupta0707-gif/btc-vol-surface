@@ -223,6 +223,75 @@ def test_grid_axes_come_from_the_environment(monkeypatch):
     assert hf._grid("Z_GRID", (0.0, 1.0)) == (0.0, 1.0)
 
 
+# ---- walk-forward selection must not see forward ------------------------
+
+def _cells(dates, per_rule: dict, tenor: int = 30):
+    """A minimal cells frame: one row per (date, rule)."""
+    return pd.DataFrame([
+        {"date": pd.Timestamp(d), "policy": rule, "net_bps": value, "tenor": tenor}
+        for rule, values in per_rule.items()
+        for d, value in zip(dates, values)
+    ])
+
+
+def test_settled_history_excludes_what_had_not_settled_yet():
+    """
+    A 30-day position opened one month before `as_of` settles within hours of
+    it, so its P&L was not available to choose with. Counting it would be a
+    one-month lookahead dressed as an expanding window.
+    """
+    dates = pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"])
+    got = hf.settled_history(dates, pd.Timestamp("2024-04-01"), 30)
+    assert list(got) == list(pd.to_datetime(["2024-01-01", "2024-02-01", "2024-03-01"]))
+    # At Mar 1, Feb 1 + 30d = Mar 2 has not settled, so only Jan 1 is known.
+    got = hf.settled_history(dates, pd.Timestamp("2024-03-01"), 30)
+    assert list(got) == [pd.Timestamp("2024-01-01")]
+
+
+def test_walk_forward_cannot_pick_a_rule_for_its_own_future():
+    """
+    `late` is the worst rule for a year and the best thereafter. A selector
+    that peeked would ride it from the start; an honest one cannot choose it
+    until its good results are settled history, so its early picks are `early`.
+    """
+    dates = pd.date_range("2020-01-01", periods=24, freq="MS")
+    frame = _cells(dates, {
+        "early": [10.0] * 12 + [0.0] * 12,
+        "late": [-10.0] * 12 + [100.0] * 12,
+    })
+    picked = hf.walk_forward(frame, ["early", "late"], tenor_days=30, warmup=3)
+    assert not picked.empty
+    first_year = picked[picked["date"] < pd.Timestamp("2021-01-01")]
+    assert (first_year["chosen"] == "early").all(), "the selector saw the future"
+    assert (picked["chosen"] == "late").any(), "it never learned"
+
+
+def test_walk_forward_respects_the_warmup():
+    dates = pd.date_range("2020-01-01", periods=12, freq="MS")
+    frame = _cells(dates, {"a": [1.0] * 12, "b": [0.0] * 12})
+    few, many = (hf.walk_forward(frame, ["a", "b"], 30, warmup=w) for w in (2, 9))
+    assert len(few) > len(many)
+    assert hf.walk_forward(frame, ["a", "b"], 30, warmup=99).empty
+
+
+def test_walk_forward_reports_what_the_chosen_rule_actually_earned():
+    """The realised number must be the chosen rule's own outcome on that date,
+    not the best outcome available on it."""
+    dates = pd.date_range("2020-01-01", periods=12, freq="MS")
+    frame = _cells(dates, {"a": [5.0] * 12, "b": [-1.0] * 11 + [999.0]})
+    picked = hf.walk_forward(frame, ["a", "b"], 30, warmup=3)
+    assert (picked["chosen"] == "a").all()
+    assert picked["net_bps"].unique().tolist() == [5.0]
+
+
+def test_walk_forward_ignores_rules_absent_from_the_data():
+    dates = pd.date_range("2020-01-01", periods=12, freq="MS")
+    frame = _cells(dates, {"a": [1.0] * 12})
+    picked = hf.walk_forward(frame, ["a", "nonexistent"], 30, warmup=2)
+    assert (picked["chosen"] == "a").all()
+    assert hf.walk_forward(frame, ["nonexistent"], 30, warmup=2).empty
+
+
 # ---- the offline cache read the compute nodes depend on -----------------
 
 def test_offline_history_never_opens_a_socket(tmp_path, monkeypatch):

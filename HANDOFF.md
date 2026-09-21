@@ -12,8 +12,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **389 tests, 31
-commits, 10,512 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **394 tests, 32
+commits, 10,744 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -24,7 +24,7 @@ commits, 10,512 lines of Python, zero remaining stubs.**
 | Surface object | done | `verify_surface.py` — 10/10 |
 | Greeks + validation | done | delta matches Deribit to 0.0007 median |
 | Strategy + backtest | **done** | 79-day study, 316 positions — §10 |
-| Costs + hedging rule | **done** | 128-cell sweep, clocks vs bands — §12 |
+| Costs + hedging rule | **done** | 128 cells, clocks vs bands, walked forward — §12 |
 | Write-up | **this file, §10 and §12** | — |
 | Dashboard | **not started** | — |
 
@@ -356,8 +356,9 @@ cost-exposed result in the file.
 and ETH on the same day are not independent, nor are adjacent strikes; §10
 reports 72 cells, so a couple of |t| > 2 are expected by chance. §12.1 adds
 128 more cells and picks its band parameter in hindsight, so its headline
-level is an upper bound; what survives selection there is the *shape* (the
-band's edge grows with cost), not the number. The two
+level is an upper bound. §12.2 walked that choice forward: on BTC at 5 bps and
+above the band still beats an a-priori clock at every warmup, on ETH it never
+does, and 70-90% of the in-sample level is reachable. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
@@ -422,19 +423,12 @@ the option spread and dies on the hedge; a Whalley-Wilmott band recovers about
 a third of that and its edge grows with cost; it is still not a trade. In
 priority order from here:
 
-1. **Walk the band parameter forward.** §12.1's +43 bps picks gamma = 1e-3
-   after seeing every inception, which is the selection this project refuses
-   elsewhere. Choose gamma on an expanding window instead — same rule
-   `cross_asset` uses for its spread median — and report what survives. This
-   is a re-aggregation of `data/research/hedge_cells`, not a re-run: every
-   gamma's per-day P&L is already on disk (77 dates x 16 rules, complete), so
-   it is an afternoon. It is first because it decides whether §12.1 states a
-   result or an upper bound, and everything downstream inherits that answer.
-   A five-line probe over both eras pooled put the expanding-window choice at
-   +82.6 bps against +81.1 for the hindsight gamma, which suggests the
-   parameter is not a knife-edge — but that is a probe, not the study: it
-   pools the eras, ignores the other three asset/tenor blocks, and does not
-   touch the fixed bands.
+1. ~~**Walk the band parameter forward.**~~ **DONE — see §12.2.** On BTC at
+   5 bps and above the band survives selection without hindsight, beating the
+   best a-priori clock at every warmup tested (+2 to +32 bps). On ETH it fails
+   everywhere, for the reason §12.1's gross column already flagged: ETH's
+   in-sample winners were under-hedging rather than replicating better.
+   Roughly 70-90% of §12.1's level is reachable; the rest was hindsight.
 
 2. **Put the band on the live book.** `hold_to_expiry` (§11.5) is the only
    study running on Track A, and it still hedges on a 4h clock — the rule now
@@ -922,7 +916,70 @@ One consequence for anything learned later: a fitted hedging policy now has to
 beat Whalley-Wilmott, not the clock. That is a much higher bar, and it is the
 right one.
 
+### 12.2 Choosing the band without hindsight — it survives on BTC, not on ETH
+
+`walkforward` stage, 6 tests. §12.1's +43 bps picked gamma after seeing every
+inception. This picks it at each inception from history that had already
+**settled** — not merely from earlier inceptions, because a 30-day position
+opened one month prior settles within hours of the next one, so counting it
+would be a one-month lookahead wearing an expanding window's clothes. The rule
+is then used once, blind. It is a re-aggregation of `hedge_cells`; no re-run.
+
+Against the better clock fixed a priori, gap in bps, across warmups:
+
+| block | slip | w=3 | w=6 | w=12 | w=18 | verdict |
+|---|---|---|---|---|---|---|
+| BTC 7d ATM | 2 | +4 | -1 | +2 | +7 | flips |
+| **BTC 7d ATM** | **5** | **+16** | **+11** | **+15** | **+32** | **holds** |
+| BTC 7d ATM | 10 | +6 | +1 | -5 | +11 | flips |
+| BTC 30d ATM | 2 | -8 | -7 | +8 | +0 | flips |
+| **BTC 30d ATM** | **5** | **+6** | **+2** | **+14** | **+10** | **holds** |
+| **BTC 30d ATM** | **10** | **+6** | **+4** | **+24** | **+23** | **holds** |
+| ETH 7d ATM | 2 | -21 | -36 | -2 | +12 | flips |
+| ETH 7d ATM | 5 | -38 | -66 | -85 | -78 | **never** |
+| ETH 7d ATM | 10 | -5 | -37 | -29 | -6 | **never** |
+| ETH 30d ATM | 2 | -23 | -19 | -11 | -16 | **never** |
+| ETH 30d ATM | 5 | -42 | -40 | -32 | -42 | **never** |
+| ETH 30d ATM | 10 | -52 | -51 | -10 | -18 | **never** |
+
+**On BTC at realistic costs the band survives.** Every cell at 5 bps and the
+30-day at 10 bps beats the best a-priori clock at all four warmups. At 2 bps
+the sign flips, which is what it should do — there is little cost to economise
+on, so there is little for a band to win. The selection is also *stable*: the
+walk-forward picks gamma = 1e-4 on 58-74 of 70-74 inceptions, so it is not
+flip-flopping between rules, which is why it works.
+
+**On ETH it fails everywhere, and §12.1 already said why.** ETH's in-sample
+band winners gave up gross (25 against 32 at 5 bps) — they lifted net by
+hedging *less*, carrying directional risk rather than replicating better. That
+does not generalise, and the walk-forward is where it stops paying. BTC's
+winner raised gross 81 to 87. **The gross diagnostic predicted which asset
+would survive**, which is the most useful thing in either section: it is a
+test that can be run before the out-of-sample check rather than after.
+
+Two methodological findings worth keeping:
+
+- **A narrower candidate set beats a wider one.** Selecting within the WW
+  family beats selecting across all sixteen rules in nearly every block (BTC
+  30-day at 5 bps: +59 against +49; at 2 bps: +72 against +37). More
+  candidates is more noise to chase, at ~12 observations a year.
+- **warmup = 6 was the least favourable value I could have picked.** On BTC
+  30-day at 5 bps the gap is +2 at w=6 and +14 at w=12. A single warmup is a
+  single draw; the table is the result, not any row of it.
+
+**Levels, so the ceiling is not overstated.** BTC 30-day ATM at 5 bps,
+ww-only walk-forward: +59 bps (t 1.4) at warmup 6, +75 (t 2.1) at warmup 12,
+against a hindsight ceiling of +68 to +85. So roughly 70-90% of §12.1's
+in-sample level is actually reachable — the rest was knowing which gamma in
+advance. It is still not a trade: the one t above 2 is itself a warmup-selected
+draw, and n is 65-70 overlapping monthly inceptions.
+
 ### Running it
+
+```bash
+python scripts/hedge_frequency.py walkforward              # warmup 6
+python scripts/hedge_frequency.py walkforward --warmup 12
+```
 
 ```bash
 python scripts/hedge_frequency.py run      # fit + sweep + report, 2m52s

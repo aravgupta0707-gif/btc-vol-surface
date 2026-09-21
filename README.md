@@ -45,8 +45,9 @@ pip install -r requirements.txt
       funding, held to expiry. `HANDOFF.md` §10.
 - [x] Rebalancing rule vs cost — 128-cell sweep of clocks against no-trade
       bands, spreads measured from the archive's own book. A Whalley-Wilmott
-      band beats the best clock by more as costs rise (+10 bps at 5 bps
-      slippage, +14 at 10). `python scripts/hedge_frequency.py run` (~5 min
-      locally), `HANDOFF.md` §12. Shards to Slurm if the grid ever outgrows
+      band beats the best clock by more as costs rise, and survives being
+      chosen without hindsight on BTC but not on ETH.
+      `python scripts/hedge_frequency.py run` (~5 min locally) and
+      `... walkforward`, `HANDOFF.md` §12. Shards to Slurm if the grid ever outgrows
       the laptop — `slurm/README.md` has the threshold.
 - [ ] Dashboard / write-up
