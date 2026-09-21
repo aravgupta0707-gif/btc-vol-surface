@@ -354,7 +354,10 @@ cost-exposed result in the file.
 
 **The statistics are thin and multiple.** About 12 inceptions a year; BTC
 and ETH on the same day are not independent, nor are adjacent strikes; §10
-reports 72 cells, so a couple of |t| > 2 are expected by chance. The two
+reports 72 cells, so a couple of |t| > 2 are expected by chance. §12.1 adds
+128 more cells and picks its band parameter in hindsight, so its headline
+level is an upper bound; what survives selection there is the *shape* (the
+band's edge grows with cost), not the number. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
@@ -414,25 +417,66 @@ periods and not others. `python scripts/health.py` runs every check now;
 
 ## 7. Next steps
 
-In priority order:
+The costs question (old step 1) is settled: §12 and §12.1. The premium clears
+the option spread and dies on the hedge; a Whalley-Wilmott band recovers about
+a third of that and its edge grows with cost; it is still not a trade. In
+priority order from here:
 
-1. ~~**Hedging-frequency study.**~~ **DONE — see §12 and §12.1.** The
-   premium survives the option spread and dies on the hedge. A Whalley-Wilmott
-   no-trade band recovers about a third of that (+43 vs +33 bps at 5 bps
-   slippage, t 1.2 vs 0.9) and its advantage grows with cost, but it is still
-   not a trade. Anything learned later must now beat the band, not the clock.
-2. **The dispersion trade properly** — long ETH vol / short BTC vol,
-   vega-neutral sizing rather than the approximation in §10, real spreads,
-   and an entry rule on the spread's own history. It is the largest effect
-   found (t 4.6 conditional) and the least examined.
-3. **Dashboard** — plotly 3D surface, per-expiry smile, RND, backtest P&L.
-   The `VolSurface` object already serves everything it needs. This is the
-   last unstarted build-guide stage.
-4. **Fix the RND tail** (§5): normalise the density over the quoted range,
-   or mark a level as extrapolated when its *integration domain* leaves the
-   quoted strikes rather than only when the level itself does.
-5. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
-   (spin-off D) both need weeks more Track A.
+1. **Walk the band parameter forward.** §12.1's +43 bps picks gamma = 1e-3
+   after seeing every inception, which is the selection this project refuses
+   elsewhere. Choose gamma on an expanding window instead — same rule
+   `cross_asset` uses for its spread median — and report what survives. This
+   is a re-aggregation of `data/research/hedge_cells`, not a re-run: every
+   gamma's per-day P&L is already on disk (77 dates x 16 rules, complete), so
+   it is an afternoon. It is first because it decides whether §12.1 states a
+   result or an upper bound, and everything downstream inherits that answer.
+   A five-line probe over both eras pooled put the expanding-window choice at
+   +82.6 bps against +81.1 for the hindsight gamma, which suggests the
+   parameter is not a knife-edge — but that is a probe, not the study: it
+   pools the eras, ignores the other three asset/tenor blocks, and does not
+   touch the fixed bands.
+
+2. **Put the band on the live book.** `hold_to_expiry` (§11.5) is the only
+   study running on Track A, and it still hedges on a 4h clock — the rule now
+   known to be the weaker one. Swapping in `strategy.hedging.walk` makes the
+   live cost measurement consistent with the archive study and costs almost
+   nothing: the walker is already written and tested. Worth doing after step 1
+   fixes which gamma to use.
+
+3. **The dispersion trade properly** — long ETH vol / short BTC vol,
+   vega-neutral sizing rather than the approximation in §10, real spreads, and
+   an entry rule on the spread's own history. Still the largest effect found
+   (-6.14 vol points a month, t 4.6 conditional) and the least examined. It is
+   better equipped now than when it was written down: the measured spread
+   curve from §12 gives it real entry costs, and `strategy/hedging.py` gives
+   it a hedging rule worth using.
+
+4. **Dashboard** — plotly 3D surface, per-expiry smile, RND, backtest P&L.
+   The `VolSurface` object already serves everything it needs, and there is
+   now more worth showing than when this was scoped: the RND monitor, the
+   premium-across-the-smile surface, and the rule comparison. Last unstarted
+   build-guide stage.
+
+5. **Fix the RND tail** (§5): normalise the density over the quoted range, or
+   mark a level as extrapolated when its *integration domain* leaves the
+   quoted strikes rather than only when the level itself does. Also fix the
+   ETH report's "below 0" level and its "BTC" heading.
+
+6. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
+   (spin-off D) both need weeks more Track A (~13 days banked). PCA is the
+   precursor to anything model-shaped — know the surface's factor structure
+   before fitting anything over it.
+
+**On models.** Not yet, and the constraint is observations rather than
+ambition: 44 inceptions in the modern era, one a month, and the free archive
+tier will not add more than 12 a year. The one honest ML-adjacent test that
+has run came back negative — `cross_asset` found implied carries no
+information about realised beyond trailing realised (RMSE 0.208 vs 0.215).
+Where the data genuinely exists is the hourly path (58,158 hours), and the
+question living there is hedging policy, which step 1 and §12.1 now answer
+with a closed form. A fitted policy would have to beat Whalley-Wilmott, not
+the clock. Revisit when Track A has months rather than days and step 6 has
+established the factor structure.
 
 ---
 
@@ -860,6 +904,13 @@ to 24 across band 0.05 / 0.1 / 0.2, and by band 0.2 the position is carrying
 directional risk, not hedging it. ETH's winners at 5-10 bps also give up gross
 (25 vs 32, 18 vs 24), so ETH's gains are partly under-hedging and should not
 be read as the same finding.
+
+**gamma is chosen in hindsight.** The +43 bps cell picks gamma = 1e-3 after
+seeing all 44 inceptions, which is the selection this project refuses
+everywhere else (`cross_asset` splits on an expanding median for exactly this
+reason). The cost-axis monotonicity is what carries the finding, because it is
+a predicted shape rather than a selected level; the *level* is optimistic and
+should be read as an upper bound until it is walked forward. §7 step 1.
 
 **The ceiling moved; the conclusion did not.** +43 bps at t 1.2 is a third
 better than the best clock and still not a trade. What changed is that the
