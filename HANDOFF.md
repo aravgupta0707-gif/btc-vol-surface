@@ -12,8 +12,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **368 tests, 30
-commits, 10,052 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **389 tests, 31
+commits, 10,512 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -24,7 +24,7 @@ commits, 10,052 lines of Python, zero remaining stubs.**
 | Surface object | done | `verify_surface.py` — 10/10 |
 | Greeks + validation | done | delta matches Deribit to 0.0007 median |
 | Strategy + backtest | **done** | 79-day study, 316 positions — §10 |
-| Costs + hedging frequency | **done** | 48-cell sweep, measured spreads — §12 |
+| Costs + hedging rule | **done** | 128-cell sweep, clocks vs bands — §12 |
 | Write-up | **this file, §10 and §12** | — |
 | Dashboard | **not started** | — |
 
@@ -49,7 +49,7 @@ python scripts/vrp_surface.py        # premium by strike and tenor  [~25 min]
 python scripts/cross_asset.py        # BTC vs ETH (needs vrp_surface first)
 python scripts/carry_study.py        # forward curve vs funding
 python scripts/hold_to_expiry.py     # Track A, settled at expiry  [~4 min]
-python scripts/hedge_frequency.py run   # hedging frequency vs cost  [~3 min]
+python scripts/hedge_frequency.py run   # rebalancing rule vs cost  [~5 min]
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
 
@@ -342,8 +342,9 @@ month**, against an entry spread of ~18 bps and hedge slippage anywhere
 from 10 to 60 bps depending on rebalancing frequency. So the surviving
 premium is about the size of realistic costs, and **hedging frequency, not
 the premium, decides the outcome.** §12 measured it: the premium clears the
-option spread (+73 bps, t 2.4) and dies on the hedge — best case +33 bps at
-t 0.9, hedging every 6h with 5 bps of slippage, negative at 10 bps.
+option spread (+73 bps, t 2.4) and dies on the hedge — +33 bps at t 0.9 on the
+best clock, +43 at t 1.2 once the rule is a Whalley-Wilmott band (§12.1), and
+the band's advantage grows with the cost it economises on.
 
 **Every study price is a mid.** No study charges the bid-ask on the option
 except `hold_to_expiry` (entry only), `archive_study` (both sides) and
@@ -415,10 +416,11 @@ periods and not others. `python scripts/health.py` runs every check now;
 
 In priority order:
 
-1. ~~**Hedging-frequency study.**~~ **DONE — see §12.** The answer is that
-   the premium survives the option spread and dies on the hedge. There is a
-   real optimum at 4–6h, but its best case is +33 bps at t 0.9, and 10 bps
-   of slippage is negative at every frequency.
+1. ~~**Hedging-frequency study.**~~ **DONE — see §12 and §12.1.** The
+   premium survives the option spread and dies on the hedge. A Whalley-Wilmott
+   no-trade band recovers about a third of that (+43 vs +33 bps at 5 bps
+   slippage, t 1.2 vs 0.9) and its advantage grows with cost, but it is still
+   not a trade. Anything learned later must now beat the band, not the clock.
 2. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads,
    and an entry rule on the spread's own history. It is the largest effect
@@ -807,6 +809,68 @@ So §5's phrasing was right: hedging frequency decides the outcome. It just
 decides it negatively at 2023-26 premium levels, unless hedge slippage is
 genuinely under ~2 bps.
 
+### 12.1 A no-trade band beats the clock, and by more as costs rise
+
+`strategy/hedging.py`, 20 tests. The sweep above measured only one rule:
+rebalance on a fixed clock. A clock trades when the calendar says so, not when
+the position has drifted, so it pays to re-hedge something that has barely
+moved and sits through something that has run. Sixteen rules now compete:
+six clocks, five fixed no-trade bands, and five Whalley-Wilmott bands,
+H = (3/2 lambda F Gamma^2 / gamma)^(1/3), which widens where gamma is low and
+where cost is high. 128 cells, 5m18s locally.
+
+All three families are the same walk over the same hourly path, differing only
+in when they say "trade" — so a clock rule expressed this way reproduces the
+old vectorised implementation *exactly* (asserted over 200 random combinations
+plus a parametrised sweep), which in turn reproduces `vrp_surface` exactly.
+The chain from §11.2 to a band's number is checked link by link rather than
+assumed.
+
+BTC 30-day ATM, 2023-26, 5 bps slippage:
+
+| rule | gross | spread | slippage | net | t | trades | turnover |
+|---|---|---|---|---|---|---|---|
+| time 6h (best clock) | +81 | 11 | 38 | +33 | 0.9 | 120 | 7.6x |
+| band 0.05 | +81 | 11 | 34 | +36 | 1.1 | 36 | 6.9x |
+| **ww gamma=1e-3** | **+87** | 11 | **33** | **+43** | **1.2** | **38** | 6.6x |
+| band 0.2 | +24 | 11 | 20 | -7 | -0.1 | 5 | 3.9x |
+
+**The band's advantage scales with the cost it exists to economise on**, which
+is the signature that matters more than any single cell:
+
+| slippage | best clock | best band | gain |
+|---|---|---|---|
+| 0 bps | +74 | +76 | +2 |
+| 2 bps | +55 | +61 | +5 |
+| 5 bps | +33 | +43 | +10 |
+| 10 bps | **-1** | **+13** | **+14** |
+
+At zero cost there is nothing to economise and the gain is ~0, as it must be.
+At 10 bps every clock is negative and the band is not. The same monotone
+pattern holds in BTC 7-day (+2/+6/+10/+8) and ETH 30-day (+0/+1/+6/+24).
+Selection across 16 rules would not track the cost axis this cleanly.
+
+**Read the gross column to tell the two mechanisms apart.** A band can lift
+net by trading less for the same replication, which is the result, or by
+replicating worse, which is a smaller hedge wearing the same name. The WW
+winner does the former — gross *rises* 81 to 87 while slippage falls 38 to 33,
+so it re-allocates trades toward where gamma actually is rather than simply
+doing fewer of them. Wide fixed bands do the latter: gross collapses 81 to 50
+to 24 across band 0.05 / 0.1 / 0.2, and by band 0.2 the position is carrying
+directional risk, not hedging it. ETH's winners at 5-10 bps also give up gross
+(25 vs 32, 18 vs 24), so ETH's gains are partly under-hedging and should not
+be read as the same finding.
+
+**The ceiling moved; the conclusion did not.** +43 bps at t 1.2 is a third
+better than the best clock and still not a trade. What changed is that the
+honest ceiling is now measured against a rule worth using rather than against
+a deliberately naive one — and that at realistic costs the *rule* is worth
+about as much as a third of the premium, which is not a small thing to know.
+
+One consequence for anything learned later: a fitted hedging policy now has to
+beat Whalley-Wilmott, not the clock. That is a much higher bar, and it is the
+right one.
+
 ### Running it
 
 ```bash
@@ -821,9 +885,10 @@ means barely move and the t-statistics inflate by ~sqrt(2).
 
 **Run it locally.** Measured throughput is ~1.05 archive-day/s for the fit
 and ~1.04 sweep-cell/s at `--workers 4`, so projected minutes are about
-`(days + cells) / 60`. The default grid is ~3 minutes and the 128-cell
-widened grid is ~5; it takes roughly 1,700 cells — a new strike or tenor
-axis, not finer hedging — before a cluster beats sitting through it.
+`(days + cells x 2) / 60`, the 2 being the cost of walking the full hourly
+path now that a band may trade at any hour. The 128-cell policy grid is
+5m18s measured; it takes roughly 800 cells — a new strike or tenor axis, or
+a much finer band grid — before a cluster beats sitting through it.
 
 For when it does: `bash slurm/submit.sh` runs two Slurm array jobs chained
 with `afterok`, grid axes overridable from the environment

@@ -14,9 +14,23 @@ the outcome. Slippage scales *with* rebalancing and discrete-hedging error
 scales *against* it, so there is a minimum somewhere and the question is
 whether it sits above or below zero.
 
-This sweeps that: hedge every 1/2/4/6/12/24h, charge 0/2/5/10 bps of traded
-notional on each rebalance, both assets, both tenors, the same nine
-standardised strikes.
+This sweeps that: sixteen rebalancing rules against 0/2/5/10 bps of traded
+notional, both assets, both tenors, the same nine standardised strikes.
+
+The rules are three families, and the comparison between them is the point:
+
+- **clocks** -- rebalance every 1/2/4/6/12/24h, the only rule the project had.
+- **fixed bands** -- hold until the delta drifts more than H from target.
+- **Whalley-Wilmott** -- the asymptotic band H = (3/2 lambda F Gamma^2 /
+  gamma)^(1/3), which widens where gamma is low and where cost is high.
+
+A clock trades when the calendar says so, not when the position has moved,
+which is why it can pay to re-hedge something that has barely drifted and sit
+through something that has run. A band answers that directly, and it is the
+right thing to try before anything learned: a policy that cannot beat a
+closed form is not worth fitting. `strategy/hedging.py` holds all three and
+reduces each to the same walk, so a band's number and a clock's number come
+out of identical code over identical paths.
 
 **The option spread is measured, not assumed.** The archive carries bid and
 ask per instrument, so each expiry gets a half-spread curve in vol points,
@@ -59,6 +73,8 @@ from scipy.stats import norm
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from strategy.hedging import walk  # noqa: E402 - needs the path above
+
 HIST_DIR = ROOT / "data" / "historical"
 RESEARCH = ROOT / "data" / "research"
 FIT_DIR = RESEARCH / "hedge_fits"
@@ -82,8 +98,23 @@ ASSETS = ("BTC", "ETH")
 TENOR_DAYS = _grid("TENOR_DAYS", (7, 30), int)
 Z_GRID = _grid("Z_GRID", (-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0))
 HEDGE_HOURS = _grid("HEDGE_HOURS", (1, 2, 4, 6, 12, 24), int)
+FIXED_BANDS = _grid("FIXED_BANDS", (0.01, 0.02, 0.05, 0.10, 0.20))
+WW_GAMMAS = _grid("WW_GAMMAS", (1e-4, 3e-4, 1e-3, 3e-3, 1e-2))
 SLIPPAGE_BPS = _grid("SLIPPAGE_BPS", (0.0, 2.0, 5.0, 10.0))
 CALL_WING = tuple(z for z in Z_GRID if z > 0)
+
+
+def policies() -> list:
+    """
+    Every rebalancing rule the sweep compares, as (kind, param, label).
+
+    The clock rules come first and are the baseline: they reproduce the
+    fixed-interval result exactly, so a band's number is read against a
+    number computed by the same walk over the same path.
+    """
+    return ([("time", float(h), f"time {h:g}h") for h in HEDGE_HOURS]
+            + [("fixed", b, f"band {b:g}") for b in FIXED_BANDS]
+            + [("whalley_wilmott", g, f"ww {g:g}") for g in WW_GAMMAS])
 
 YEAR_HOURS = 365.25 * 24
 ERAS = {"2020-22": (2020, 2022), "2023-26": (2023, 2026)}
@@ -98,8 +129,8 @@ SVI_KEYS = ("a", "b", "rho", "m", "sigma")
 # ---- grid ---------------------------------------------------------------
 
 def cells() -> list:
-    """Every (asset, hedge interval, slippage) the sweep covers."""
-    return [(a, h, s) for a in ASSETS for h in HEDGE_HOURS for s in SLIPPAGE_BPS]
+    """Every (asset, policy, slippage) the sweep covers."""
+    return [(a, p, s) for a in ASSETS for p in policies() for s in SLIPPAGE_BPS]
 
 
 def shard(items: list, spec) -> list:
@@ -224,10 +255,13 @@ def hedged_seller_pnl(spots, hours, K: float, T0: float, sigma: float,
     convention the option is priced in; at expiry F = S. Delta is Black-76 at
     the option's own inception implied vol.
 
-    `gross` reproduces scripts/vrp_surface.py exactly when both costs are
-    zero -- that equality is asserted in the tests, so this stays a cost model
-    bolted onto the published result rather than a second, different
-    calculation of it.
+    **Reference implementation.** The sweep itself now runs through
+    `strategy.hedging.walk`, which generalises this to rules that decide on
+    drift rather than the clock. This one is kept because it is the tested
+    link back to the published result: `gross` reproduces
+    scripts/vrp_surface.py exactly at zero cost, and `walk` under a clock
+    rule reproduces *this* exactly, so the chain from §11.2 to a band's
+    number is asserted end to end rather than assumed.
 
     Costs, for a seller who is short the option and long delta to hedge it:
       - the option is sold at the bid, `sigma - half_spread_vol`, once;
@@ -301,10 +335,10 @@ def _half_spread_at(curve, T: float, k: float) -> float:
 
 
 def run_cell(spec) -> list:
-    """One (asset, hedge interval, slippage) over every archive day."""
+    """One (asset, policy, slippage) over every archive day."""
     from data.history import hourly_funding
 
-    asset, hedge_h, slip = spec
+    asset, (kind, param, label), slip = spec
     fits_all, spreads_all = load_fits()
     fits_all = fits_all[(fits_all["asset"] == asset) & (fits_all["skipped"] == "")]
     spreads_all = spreads_all[spreads_all["asset"] == asset]
@@ -312,7 +346,9 @@ def run_cell(spec) -> list:
 
     rows = []
     for date, day_fits in fits_all.groupby("date"):
-        base = {"asset": asset, "date": date, "hedge_hours": hedge_h, "slip_bps": slip}
+        base = {"asset": asset, "date": date, "policy": label, "policy_kind": kind,
+                "policy_param": param, "slip_bps": slip,
+                "hedge_hours": param if kind == "time" else np.nan}
         try:
             surface = _surface_for(day_fits)
         except Exception as exc:  # noqa: BLE001
@@ -327,11 +363,11 @@ def run_cell(spec) -> list:
             if window.empty or window.index[-1] < tE or window.index[0] > t0:
                 rows.append(dict(base, tenor=days, skipped="index gap"))
                 continue
-            step = window.iloc[::hedge_h]
-            if step.index[-1] != window.index[-1]:
-                step = pd.concat([step, window.iloc[[-1]]])
-            hours = ((step.index - t0) / pd.Timedelta(hours=1)).to_numpy(float)
-            spots = step.to_numpy(float)
+            # The full hourly path, every rule. A clock rule subsamples it
+            # through its own `forced` mask, so a band is free to trade at
+            # any hour and both are judged on identical data.
+            hours = ((window.index - t0) / pd.Timedelta(hours=1)).to_numpy(float)
+            spots = window.to_numpy(float)
 
             T0 = days / 365.25
             F0 = surface.forward(T0)
@@ -345,8 +381,8 @@ def run_cell(spec) -> list:
                 hs = _half_spread_at(curve, T0, float(np.log(K / F0)))
                 legs = ("P", "C") if z == 0 else (("P",) if z < 0 else ("C",))
 
-                out = [hedged_seller_pnl(spots, hours, K, T0, sigma, carry, leg,
-                                         half_spread_vol=hs, slip_bps=slip)
+                out = [walk(spots, hours, K, T0, sigma, carry, leg, kind, param,
+                            slip_bps=slip, half_spread_vol=hs)
                        for leg in legs]
                 if not np.isfinite(hs) or any(o["unsellable"] for o in out):
                     rows.append(dict(base, tenor=days, z=z, skipped="spread exceeds vol"))
@@ -355,7 +391,8 @@ def run_cell(spec) -> list:
                        ("premium", "gross", "net", "spread_cost", "slippage", "turnover")}
                 rows.append(dict(
                     base, tenor=days, z=z, skipped="", strike=K, spot=spots[0],
-                    iv=sigma, atm_iv=atm, half_spread_vol=hs, hedges=out[0]["hedges"],
+                    iv=sigma, atm_iv=atm, half_spread_vol=hs,
+                    trades=out[0]["trades"], mean_band=out[0]["mean_band"],
                     supported=not (flags["outside_supported_range"]
                                    or flags["beyond_fitted_maturities"]),
                     premium_bps=agg["premium"] / spots[0] * 1e4,
@@ -377,7 +414,8 @@ def run_sweep(spec, workers: int) -> None:
     with ProcessPoolExecutor(max_workers=workers) as pool:
         for cell, out in zip(mine, pool.map(run_cell, mine)):
             rows.extend(out)
-            print(f"  {cell[0]} {cell[1]:>2}h {cell[2]:>4.1f}bps -> {len(out)} rows", flush=True)
+            print(f"  {cell[0]:4s} {cell[1][2]:<10s} {cell[2]:>4.1f}bps -> {len(out)} rows",
+                  flush=True)
 
     CELL_DIR.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_parquet(CELL_DIR / f"cells_{tag}.parquet", index=False)
@@ -399,29 +437,41 @@ def load_cells():
         raise FileNotFoundError(f"no cells in {CELL_DIR}: run the sweep stage first")
     frame = pd.concat([pd.read_parquet(p) for p in files], ignore_index=True)
     _no_duplicates(frame[frame["skipped"] == ""],
-                   ["asset", "date", "tenor", "z", "hedge_hours", "slip_bps"], CELL_DIR)
+                   ["asset", "date", "tenor", "z", "policy", "slip_bps"], CELL_DIR)
     frame["date"] = pd.to_datetime(frame["date"])
     frame["year"] = frame["date"].dt.year
     return frame
 
 
+def _ordered_policies(sub) -> list:
+    """
+    Policies in grid order -- clocks, then fixed bands, then Whalley-Wilmott.
+
+    Not alphabetical: the comparison only reads if the baseline the bands are
+    meant to beat sits above them.
+    """
+    present = set(sub["policy"].unique())
+    ordered = [label for _, _, label in policies() if label in present]
+    return ordered + sorted(present - set(ordered))
+
+
 def _panel(sub, label: str) -> None:
-    """mean net bps (t) over hedge interval x slippage, per era."""
+    """mean net bps (t) over rebalancing rule x slippage, per era."""
     print(f"\n  {label}")
     # Axes come from the swept data, not from the module constants, so a
     # report still reads correctly against cells swept under a wider grid.
-    intervals = sorted(sub["hedge_hours"].unique())
+    rules = _ordered_policies(sub)
     slips = sorted(sub["slip_bps"].unique())
     header = "".join(f"{s:>6.0f} bps" for s in slips)
     for era, (lo, hi) in ERAS.items():
         era_rows = sub[(sub["year"] >= lo) & (sub["year"] <= hi)]
         if era_rows.empty:
             continue
-        print(f"    {era}  hedge |{header}       n")
-        for hours in intervals:
+        print(f"    {era}  rule     |{header}       n")
+        for rule in rules:
             line, count = "", 0
             for slip in slips:
-                cell = era_rows[(era_rows["hedge_hours"] == hours)
+                cell = era_rows[(era_rows["policy"] == rule)
                                 & (era_rows["slip_bps"] == slip)]
                 by_day = cell.groupby("date")["net_bps"].mean()
                 count = len(by_day)
@@ -429,12 +479,12 @@ def _panel(sub, label: str) -> None:
                     line += f"{'--':>11}"
                 else:
                     line += f"{by_day.mean():>+6.0f}({_t(by_day):>+4.1f})"
-            print(f"      {hours:>3}h      |{line}  {count:>5}")
+            print(f"      {rule:<10s}|{line}  {count:>5}")
 
 
 def report(frame) -> None:
     ok = frame[(frame["skipped"] == "") & frame["supported"].fillna(False)]
-    print(f"\nHedging frequency vs cost -- {len(ok)} priced positions, "
+    print(f"\nRebalancing rule vs cost -- {len(ok)} priced positions, "
           f"{ok['date'].nunique()} inceptions")
     print("mean net bps of spot (t), seller, held to expiry, spread measured from the book")
 
@@ -458,19 +508,67 @@ def report(frame) -> None:
     if look.empty:
         print("  (no rows)")
     else:
-        print(f"  {'hedge':>6}{'premium':>10}{'gross':>9}{'spread':>9}"
-              f"{'slippage':>10}{'net':>9}{'turnover':>10}")
-        for hours in sorted(look["hedge_hours"].unique()):
-            row = look[look["hedge_hours"] == hours]
+        print(f"  {'rule':<11}{'premium':>9}{'gross':>8}{'spread':>8}"
+              f"{'slippage':>10}{'net':>8}{'t':>7}{'trades':>8}{'turnover':>10}{'band':>8}")
+        for rule in _ordered_policies(look):
+            row = look[look["policy"] == rule]
             if row.empty:
                 continue
-            print(f"  {hours:>5}h{row['premium_bps'].mean():>10.0f}"
-                  f"{row['gross_bps'].mean():>9.0f}{row['spread_bps'].mean():>9.0f}"
-                  f"{row['slippage_bps'].mean():>10.0f}{row['net_bps'].mean():>9.0f}"
-                  f"{row['turnover_x'].mean():>9.1f}x")
+            by_day = row.groupby("date")["net_bps"].mean()
+            band = row["mean_band"].mean()
+            print(f"  {rule:<11}{row['premium_bps'].mean():>9.0f}"
+                  f"{row['gross_bps'].mean():>8.0f}{row['spread_bps'].mean():>8.0f}"
+                  f"{row['slippage_bps'].mean():>10.0f}{row['net_bps'].mean():>8.0f}"
+                  f"{_t(by_day):>7.1f}{row['trades'].mean():>8.0f}"
+                  f"{row['turnover_x'].mean():>9.1f}x"
+                  f"{'' if not np.isfinite(band) else f'{band:>8.3f}'}")
+
+    _best_by_cost(ok)
 
     print("\nRead the gross column first: where it is not significant, a positive net is")
     print("noise with a cost model on it. Section 11.2's caveats all still apply.")
+    print("A band only earns its place by beating the best clock in the same column,")
+    print("not by beating the naive hourly one -- and only if its gross holds up.")
+    print("A band wide enough to lift net by hedging *less* has stopped being a hedge.")
+
+
+def _best_by_cost(ok) -> None:
+    """
+    Best clock against best band, per cost level -- the study's actual question.
+
+    Both sides are picked in sample, so both carry the same selection penalty;
+    that is the point of comparing best-to-best rather than best-band against
+    one arbitrary clock. `gross` is carried alongside because a band can lift
+    net two different ways: by trading less for the same replication, which is
+    the result, or by replicating worse, which is just a smaller hedge wearing
+    the same name.
+    """
+    print(f"\n{'=' * 78}")
+    print("best clock vs best band, ATM straddle, 2023-26 (net bps, gross in brackets)")
+    for asset in ASSETS:
+        for days in TENOR_DAYS:
+            sub = ok[(ok["asset"] == asset) & (ok["tenor"] == days) & (ok["z"] == 0.0)
+                     & (ok["year"] >= 2023)]
+            if sub.empty:
+                continue
+            print(f"\n  {asset} {days}-day")
+            print(f"    {'slip':>5}  {'best clock':>26}  {'best band':>26}  {'gain':>6}")
+            for slip in sorted(sub["slip_bps"].unique()):
+                at = sub[sub["slip_bps"] == slip]
+                clocks = at[at["policy_kind"] == "time"]
+                bands = at[at["policy_kind"] != "time"]
+                if clocks.empty or bands.empty:
+                    continue
+                best = {}
+                for name, group in (("clock", clocks), ("band", bands)):
+                    means = group.groupby("policy")[["net_bps", "gross_bps"]].mean()
+                    top = means["net_bps"].idxmax()
+                    best[name] = (top, means.loc[top, "net_bps"], means.loc[top, "gross_bps"])
+                gain = best["band"][1] - best["clock"][1]
+                print(f"    {slip:>5.0f}  {best['clock'][0]:>10s} "
+                      f"{best['clock'][1]:>+6.0f} ({best['clock'][2]:>+4.0f})  "
+                      f"{best['band'][0]:>10s} {best['band'][1]:>+6.0f} "
+                      f"({best['band'][2]:>+4.0f})  {gain:>+6.0f}")
 
 
 # ---- cli ----------------------------------------------------------------

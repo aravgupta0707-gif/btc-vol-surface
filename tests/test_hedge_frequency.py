@@ -196,8 +196,18 @@ def test_distinct_failures_on_one_day_are_not_duplicates():
 
 def test_every_cell_is_covered_once():
     every = hf.cells()
-    assert len(every) == len(hf.ASSETS) * len(hf.HEDGE_HOURS) * len(hf.SLIPPAGE_BPS)
+    assert len(every) == len(hf.ASSETS) * len(hf.policies()) * len(hf.SLIPPAGE_BPS)
     assert len(set(every)) == len(every)
+
+
+def test_the_clock_baseline_comes_first_in_the_grid():
+    """A band is only interesting against the best clock, so the clocks have
+    to be swept in the same run and printed above the bands."""
+    labels = [label for _, _, label in hf.policies()]
+    assert labels[:len(hf.HEDGE_HOURS)] == [f"time {h:g}h" for h in hf.HEDGE_HOURS]
+    assert any(l.startswith("band") for l in labels)
+    assert any(l.startswith("ww") for l in labels)
+    assert len(set(labels)) == len(labels)
 
 
 # ---- the grid is overridable from the job script ------------------------

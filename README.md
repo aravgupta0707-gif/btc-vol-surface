@@ -43,8 +43,10 @@ pip install -r requirements.txt
       see forward. `python scripts/run_backtest.py`
 - [x] Six-year studies — the premium across the smile, BTC vs ETH, carry vs
       funding, held to expiry. `HANDOFF.md` §10.
-- [x] Hedging frequency vs cost — 48-cell sweep with spreads measured from
-      the archive's own book. `python scripts/hedge_frequency.py run` (~3 min
+- [x] Rebalancing rule vs cost — 128-cell sweep of clocks against no-trade
+      bands, spreads measured from the archive's own book. A Whalley-Wilmott
+      band beats the best clock by more as costs rise (+10 bps at 5 bps
+      slippage, +14 at 10). `python scripts/hedge_frequency.py run` (~5 min
       locally), `HANDOFF.md` §12. Shards to Slurm if the grid ever outgrows
       the laptop — `slurm/README.md` has the threshold.
 - [ ] Dashboard / write-up
