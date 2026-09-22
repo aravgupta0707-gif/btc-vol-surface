@@ -50,7 +50,7 @@ python scripts/verify_surface.py     # Phase 5
 # studies (--report re-prints saved results without recomputing)
 python scripts/run_backtest.py       # one position on Track A
 python scripts/archive_study.py      # 79 one-day positions, six years
-python scripts/vrp_surface.py        # premium by strike and tenor  [~25 min]
+python scripts/vrp_surface.py        # premium by strike and tenor  [8m02s]
 python scripts/cross_asset.py        # BTC vs ETH (needs vrp_surface first)
 python scripts/carry_study.py        # forward curve vs funding
 python scripts/hold_to_expiry.py     # Track A, settled at expiry  [~4 min]
@@ -108,10 +108,10 @@ the paid tier.
 
 **Hourly continuous history — `data/history.py`.** Perpetual candles,
 funding, and the Deribit **index**, hourly for BTC and ETH from 2020-02-01:
-58,158 (BTC) and 58,154 (ETH) hours, 2 missing each. Cached in
-`data/research`, refreshed incrementally — and **only** when called without
-`offline=True`, so the cache lags whenever recent work has been offline (§12's
-sweep reads it that way); one online call tops it up.
+58,203 hours each at 2026-09-22, 2 missing. Cached in `data/research`,
+refreshed incrementally — and **only** when called without `offline=True`, so
+the cache lags whenever recent work has been offline (§12's sweep reads it
+that way); any one online call tops it up.
 
 This is what makes the archive usable: the chains give one
 cross-section a month, and this gives the price path between them, so an
@@ -806,6 +806,13 @@ sleep gap (max 13h) are marked, because a real book would not have one.
 - Long-running jobs: `| tail` buffers everything until EOF, and Python
   buffers stdout when redirected. Use `python -u` and no pipe, or the output
   file stays empty and the job looks hung.
+- **Timing a study by sampling it in-process understates it.** Sampling
+  `vrp_surface`'s per-day function in a warm loop suggested ~5 minutes and the
+  file claimed ~25; timed end to end it is 8m02s. The gap is per-task parquet
+  reads and the index frame being pickled to each worker, neither of which a
+  warm in-process sample pays. Time the whole script before quoting a number.
+  Its per-asset progress line also prints when a leg *starts*, so polling it
+  measures your own poll interval rather than the leg.
 
 ---
 
