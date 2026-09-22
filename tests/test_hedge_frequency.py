@@ -1,7 +1,7 @@
 """
 Tests for the hedging-frequency sweep.
 
-The study's whole claim is that it adds *costs* to the section 11.2 result
+The study's whole claim is that it adds *costs* to the section 10.2 result
 rather than recomputing it differently, so the first and most important test
 is that its P&L reduces exactly to `vrp_surface`'s when both costs are zero.
 Everything else guards the two things a cost model gets quietly wrong: a sign
@@ -59,7 +59,7 @@ def test_zero_cost_reduces_to_vrp_surface(option):
     """
     With no spread and no slippage this must equal scripts/vrp_surface.py to
     the last bit -- otherwise the sweep is a second, different calculation of
-    section 11.2 and any disagreement between them is unattributable.
+    section 10.2 and any disagreement between them is unattributable.
     """
     rng = np.random.default_rng(11)
     for _ in range(50):

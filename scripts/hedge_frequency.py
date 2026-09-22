@@ -1,12 +1,13 @@
 """
-Can the surviving premium actually be collected, at any hedging frequency?
+Can the surviving premium actually be collected, under any rebalancing rule?
 
     python scripts/hedge_frequency.py run          fit, sweep, report (local)
     python scripts/hedge_frequency.py fit          stage 1 only  (shardable)
     python scripts/hedge_frequency.py sweep        stage 2 only  (shardable)
     python scripts/hedge_frequency.py report       re-print from saved cells
+    python scripts/hedge_frequency.py walkforward  choose the rule blind (§12.2)
 
-HANDOFF.md section 11.2 found +83 bps of spot a month on the BTC 30-day ATM
+HANDOFF.md section 10.2 found +83 bps of spot a month on the BTC 30-day ATM
 straddle and the call wing in 2023-26 -- priced at mid, with no spread and no
 hedge cost. Section 5 calls that "about the size of realistic costs", which
 makes the frequency of rebalancing, not the premium, the thing that decides
@@ -43,16 +44,16 @@ index carries no book to measure one from.
 Two stages, because the expensive part is not the part being swept. Fitting a
 day's surface is ~98% of the work and does not depend on the hedge interval
 or the slippage assumption at all, so stage 1 fits each archive day once and
-banks the SVI parameters and the spread curve; stage 2 sweeps the 48 grid
-cells over that cache. Re-fitting per cell would burn ~1.9 CPU-hours to
-recompute identical surfaces 48 times.
+banks the SVI parameters and the spread curve; stage 2 sweeps the 128 grid
+cells over that cache. Re-fitting per cell would recompute the same 158
+surfaces 128 times over, for hours of identical arithmetic.
 
 Both stages shard with `--shard i/n` for a Slurm array; every task writes its
 own file and nothing is shared, so there is no locking and no combine step.
 See slurm/README.md.
 
 What this is not: the gross column is still a mid-priced number and carries
-every caveat section 11.2 does -- one inception a month, adjacent strikes not
+every caveat section 10.2 does -- one inception a month, adjacent strikes not
 independent, 72 cells reported. The net column adds costs to that, it does
 not rescue it. A frequency that turns net positive on a strike that was not
 significant gross is noise with a cost model bolted on.
@@ -79,6 +80,7 @@ HIST_DIR = ROOT / "data" / "historical"
 RESEARCH = ROOT / "data" / "research"
 FIT_DIR = RESEARCH / "hedge_fits"
 CELL_DIR = RESEARCH / "hedge_cells"
+
 
 def _grid(name: str, default: tuple, cast=float) -> tuple:
     """
@@ -115,6 +117,7 @@ def policies() -> list:
     return ([("time", float(h), f"time {h:g}h") for h in HEDGE_HOURS]
             + [("fixed", b, f"band {b:g}") for b in FIXED_BANDS]
             + [("whalley_wilmott", g, f"ww {g:g}") for g in WW_GAMMAS])
+
 
 YEAR_HOURS = 365.25 * 24
 ERAS = {"2020-22": (2020, 2022), "2023-26": (2023, 2026)}
@@ -260,7 +263,7 @@ def hedged_seller_pnl(spots, hours, K: float, T0: float, sigma: float,
     drift rather than the clock. This one is kept because it is the tested
     link back to the published result: `gross` reproduces
     scripts/vrp_surface.py exactly at zero cost, and `walk` under a clock
-    rule reproduces *this* exactly, so the chain from §11.2 to a band's
+    rule reproduces *this* exactly, so the chain from §10.2 to a band's
     number is asserted end to end rather than assumed.
 
     Costs, for a seller who is short the option and long delta to hedge it:
@@ -526,7 +529,7 @@ def report(frame) -> None:
     _best_by_cost(ok)
 
     print("\nRead the gross column first: where it is not significant, a positive net is")
-    print("noise with a cost model on it. Section 11.2's caveats all still apply.")
+    print("noise with a cost model on it. Section 10.2's caveats all still apply.")
     print("A band only earns its place by beating the best clock in the same column,")
     print("not by beating the naive hourly one -- and only if its gross holds up.")
     print("A band wide enough to lift net by hedging *less* has stopped being a hedge.")

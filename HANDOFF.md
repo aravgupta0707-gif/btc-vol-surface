@@ -1,8 +1,13 @@
 # Handoff
 
 Everything needed to pick this project up cold. Written 2026-09-09, updated
-2026-09-20 after the archive completed, the six-year studies ran (§10), and
-the hedging-frequency sweep answered §7 step 1 (§12).
+2026-09-22 after the archive completed, the six-year studies ran (§10), and
+the hedging-rule work closed §7 step 1 (§12, §12.1, §12.2).
+
+**The repository has a remote now**: `origin` is
+`github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
+clone gets the code and nothing else — every data directory is gitignored, so
+see §2 for what has to be moved separately.
 
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
 per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. This file is the
@@ -12,7 +17,7 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **394 tests, 32
+Every build-guide stage but the dashboard is complete. **394 tests, 34
 commits, 10,744 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
@@ -49,7 +54,8 @@ python scripts/vrp_surface.py        # premium by strike and tenor  [~25 min]
 python scripts/cross_asset.py        # BTC vs ETH (needs vrp_surface first)
 python scripts/carry_study.py        # forward curve vs funding
 python scripts/hold_to_expiry.py     # Track A, settled at expiry  [~4 min]
-python scripts/hedge_frequency.py run   # rebalancing rule vs cost  [~5 min]
+python scripts/hedge_frequency.py run          # rebalancing rule vs cost [~5 min]
+python scripts/hedge_frequency.py walkforward  # the same, chosen blind (§12.2)
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
 
@@ -78,8 +84,9 @@ and ETH (inverse books) and USDC (linear book, six underlyings in one call —
 BTC, ETH, SOL, XRP, AVAX, HYPE, TRX). Writes
 `data/raw/<currency>_chain_<stamp>.parquet`, ~5 MB/day for all three.
 
-At 2026-09-20: **BTC 209 snapshots, ETH and USDC 185 each**, from
-2026-09-07, 32 MB. Every long gap is the laptop sleeping, and each ends in a
+At 2026-09-22: **BTC 247 snapshots, ETH and USDC 223 each**, from
+2026-09-07, 38.6 MB — ~15 days at ~17 snapshots a day rather than 24. Every
+long gap is the laptop sleeping, and each ends in a
 catch-up run at an odd minute — `StartWhenAvailable` firing on wake.
 `-WakeToRun` would close them at the cost of waking the machine hourly;
 deliberately not enabled. So Track A is hourly but **not contiguous**, which
@@ -101,8 +108,12 @@ the paid tier.
 
 **Hourly continuous history — `data/history.py`.** Perpetual candles,
 funding, and the Deribit **index**, hourly for BTC and ETH from 2020-02-01:
-58,154 hours each, 2 missing. Cached in `data/research`, refreshed
-incrementally. This is what makes the archive usable: the chains give one
+58,158 (BTC) and 58,154 (ETH) hours, 2 missing each. Cached in
+`data/research`, refreshed incrementally — and **only** when called without
+`offline=True`, so the cache lags whenever recent work has been offline (§12's
+sweep reads it that way); one online call tops it up.
+
+This is what makes the archive usable: the chains give one
 cross-section a month, and this gives the price path between them, so an
 option can be hedged and settled. Use the index, not the perp — see §4
 finding 13.
@@ -127,8 +138,10 @@ surface/build.py        snapshot -> fitted slices (shared pipeline)
 surface/surface.py      VolSurface: iv / price / greeks for any (K, T)
 surface/density.py      risk-neutral density, quantiles, tail probabilities
 strategy/straddle.py    delta-hedged short straddle, position + costs
+strategy/hedging.py     when to rebalance: clocks, fixed bands, Whalley-Wilmott
 strategy/backtest.py    walk-forward loop, no-lookahead guards, metrics
 scripts/health.py       watchdog over everything that runs unattended
+slurm/                  array jobs for the §12 sweep, unused by default
 ```
 
 Dependency direction is strictly downward — `data` knows nothing about
@@ -418,59 +431,58 @@ periods and not others. `python scripts/health.py` runs every check now;
 
 ## 7. Next steps
 
-The costs question (old step 1) is settled: §12 and §12.1. The premium clears
-the option spread and dies on the hedge; a Whalley-Wilmott band recovers about
-a third of that and its edge grows with cost; it is still not a trade. In
-priority order from here:
+**Settled, do not redo.** The costs question is answered across §12, §12.1 and
+§12.2: the premium clears the option spread (+73 bps, t 2.4) and dies on the
+hedge; a Whalley-Wilmott no-trade band beats the best clock and beats it by
+more as costs rise; on BTC at 5 bps and above that survives being chosen
+without hindsight, on ETH it never does. It is still not a trade — the best
+honest cell is ~+59 to +75 bps at t 1.4-2.1 over 65-70 overlapping monthly
+inceptions.
 
-1. ~~**Walk the band parameter forward.**~~ **DONE — see §12.2.** On BTC at
-   5 bps and above the band survives selection without hindsight, beating the
-   best a-priori clock at every warmup tested (+2 to +32 bps). On ETH it fails
-   everywhere, for the reason §12.1's gross column already flagged: ETH's
-   in-sample winners were under-hedging rather than replicating better.
-   Roughly 70-90% of §12.1's level is reachable; the rest was hindsight.
+In priority order from here:
 
-2. **Put the band on the live book.** `hold_to_expiry` (§11.5) is the only
-   study running on Track A, and it still hedges on a 4h clock — the rule now
-   known to be the weaker one. Swapping in `strategy.hedging.walk` makes the
-   live cost measurement consistent with the archive study and costs almost
-   nothing: the walker is already written and tested. Worth doing after step 1
-   fixes which gamma to use.
+1. **Put the band on the live book.** `hold_to_expiry` (§10.5) is the only
+   study running on Track A and still hedges on a 4h clock — the rule now
+   known to be weaker. Swap in `strategy.hedging.walk`. Use **gamma = 1e-4**,
+   which is what the walk-forward actually picks (§12.2), not the 1e-3 that
+   wins in hindsight (§12.1); taking the hindsight value would reintroduce
+   exactly the selection §12.2 removed. Small, mechanical, and it makes the
+   live cost measurement consistent with the archive study.
 
-3. **The dispersion trade properly** — long ETH vol / short BTC vol,
+2. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and
    an entry rule on the spread's own history. Still the largest effect found
-   (-6.14 vol points a month, t 4.6 conditional) and the least examined. It is
-   better equipped now than when it was written down: the measured spread
-   curve from §12 gives it real entry costs, and `strategy/hedging.py` gives
-   it a hedging rule worth using.
+   (-6.14 vol points a month, t 4.6 conditional) and the least examined. Better
+   equipped than when it was scoped: §12's measured spread curve gives it real
+   entry costs, and `strategy/hedging.py` gives it a hedging rule worth using.
+   Note the asymmetry §12.2 found — a rule validated on BTC did not transfer to
+   ETH — before assuming anything crosses between the two.
 
-4. **Dashboard** — plotly 3D surface, per-expiry smile, RND, backtest P&L.
-   The `VolSurface` object already serves everything it needs, and there is
-   now more worth showing than when this was scoped: the RND monitor, the
-   premium-across-the-smile surface, and the rule comparison. Last unstarted
-   build-guide stage.
+3. **Dashboard** — plotly 3D surface, per-expiry smile, RND, backtest P&L.
+   `dashboard/app.py` is still the original stub and this is the last unstarted
+   build-guide stage. The `VolSurface` object already serves everything it
+   needs, and there is more worth showing than when it was scoped: the RND
+   monitor, the premium-across-the-smile surface, and the rule comparison.
 
-5. **Fix the RND tail** (§5): normalise the density over the quoted range, or
-   mark a level as extrapolated when its *integration domain* leaves the
-   quoted strikes rather than only when the level itself does. Also fix the
-   ETH report's "below 0" level and its "BTC" heading.
+4. **Fix the RND tail** (§5): normalise the density over the quoted range, or
+   mark a level as extrapolated when its *integration domain* leaves the quoted
+   strikes rather than only when the level itself does. Also fix the ETH
+   report's "below 0" level and its "BTC" heading.
 
-6. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
-   (spin-off D) both need weeks more Track A (~13 days banked). PCA is the
-   precursor to anything model-shaped — know the surface's factor structure
-   before fitting anything over it.
+5. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
+   (spin-off D) both need weeks more Track A (~15 days banked, ~17 snapshots a
+   day). PCA is the precursor to anything model-shaped.
 
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive
-tier will not add more than 12 a year. The one honest ML-adjacent test that
-has run came back negative — `cross_asset` found implied carries no
-information about realised beyond trailing realised (RMSE 0.208 vs 0.215).
-Where the data genuinely exists is the hourly path (58,158 hours), and the
-question living there is hedging policy, which step 1 and §12.1 now answer
-with a closed form. A fitted policy would have to beat Whalley-Wilmott, not
-the clock. Revisit when Track A has months rather than days and step 6 has
-established the factor structure.
+tier adds twelve a year. The one honest ML-adjacent test that has run came back
+negative — `cross_asset` found implied carries no information about realised
+beyond trailing realised (RMSE 0.208 vs 0.215). Where data genuinely exists is
+the hourly path (58k hours), and the question living there is hedging policy,
+which §12.1 and §12.2 now answer with a closed form. So a fitted policy has to
+beat Whalley-Wilmott chosen out of sample, not a clock — and §12.2 is the
+harness to judge it with. Revisit when Track A has months rather than days and
+step 5 has established the factor structure.
 
 ---
 
@@ -635,7 +647,7 @@ clamping starts to bite. Worth knowing before quoting a crash probability.
 Four studies on the completed archive plus the live collection. All are
 re-printable from saved results in `data/research/` without recomputing.
 
-### 11.1 One-day positions, 79 days, both assets — `archive_study.py`
+### 10.1 One-day positions, 79 days, both assets — `archive_study.py`
 
 Sell the ATM straddle at 00:00, hedge every 4h, buy it back at 23:00; one
 independent position per archive day. The tenor is **fixed** to a weekly
@@ -666,7 +678,7 @@ days: the machinery does what theory says, on a sample large enough to tell.
 **A daily round trip cannot work** — it pays the spread twice for one day of
 decay. That is a statement about the cost structure, not about the premium.
 
-### 11.2 The premium across the smile — `vrp_surface.py`
+### 10.2 The premium across the smile — `vrp_surface.py`
 
 Price options at fixed standardised moneyness `K = F exp(z sigma_atm sqrt(T))`
 off each day's 00:00 surface, sell at mid, delta-hedge every 4h along the
@@ -694,7 +706,7 @@ BTC 7-day: nothing significant after 2022. ETH 30-day: the 2020-22 premium
 sat in the *put* wing (z-2.0 +48, t 2.93) and after 2022 only the far call
 wing survives (z+2.0 +19, t 2.97). ETH 7-day: nothing.
 
-### 11.3 BTC against ETH — `cross_asset.py`
+### 10.3 BTC against ETH — `cross_asset.py`
 
 77 paired months, 30-day ATM, from the same fitted surfaces.
 
@@ -711,7 +723,7 @@ wing survives (z+2.0 +19, t 2.97). ETH 7-day: nothing.
   spread is narrow, -1.57 (t -0.70) when wide. Holds separately in both eras
   (-8.13 t -3.18; -4.44 t -3.86) and in 6 of 7 years; 64% of months.
 
-### 11.4 Carry against funding — `carry_study.py`
+### 10.4 Carry against funding — `carry_study.py`
 
 Implied carry measured **forward-to-forward inside one snapshot** (never
 against the index — finding 12 and the §4 correction), against the funding
@@ -728,7 +740,7 @@ and runs about a point rich to realised funding — the borrow and collateral
 wedge, not a mispricing. Slopes below 1 with positive intercepts: the curve
 is a shrunk, mean-reverting forecast of a much noisier series.
 
-### 11.5 Held to expiry on live data — `hold_to_expiry.py`
+### 10.5 Held to expiry on live data — `hold_to_expiry.py`
 
 The realistic cost structure: sell at the bid 1 or 7 days out, hedge every
 4h, settle at intrinsic against the 08:00 index — **spread paid once**.
@@ -745,7 +757,27 @@ sleep gap (max 13h) are marked, because a real book would not have one.
 ## 11. Operational notes
 
 - `data/raw/`, `data/historical/` and `data/research/` are gitignored; no
-  data is tracked. 53 tracked files, zero parquet or logs among them.
+  data is tracked. 62 tracked files, zero parquet or logs among them. So a
+  fresh clone runs the tests but reproduces no study: the archive (105 MB,
+  158 files), the hourly caches and every `data/research` output have to be
+  copied from this machine, not fetched from GitHub.
+- **Compute stays local unless it genuinely does not fit.** Measured at
+  `--workers 4`: ~1.05 archive-day/s to fit and ~0.5 sweep-cell/s, so
+  projected minutes are about `(days + cells x 2) / 60`. The §12 grid is 5
+  minutes; `slurm/` exists for when a grid outgrows that and is deliberately
+  unused otherwise, because queue wait and a 105 MB rsync cost more than the
+  job saves at this size. `slurm/README.md` carries the arithmetic.
+- **`core.autocrlf` is true here, so checkouts rewrite text files to CRLF.**
+  A shell script that goes to a Linux box dies on that with
+  `bad interpreter: /bin/bash^M`. `.gitattributes` pins `*.sh` and `*.slurm`
+  to LF; extend it before adding anything else destined for a cluster.
+- **Study caches are globbed, so two generations silently double-count.**
+  `hedge_frequency.py` writes one file per shard and reads them all back, so
+  a re-run at a different shard count would read both sets — means barely
+  move, t inflates by ~sqrt(2). Both loaders refuse duplicates rather than
+  averaging them, `run` clears the directories it owns, and a bare
+  `fit`/`sweep` does not (shards are peers). Any future sharded study needs
+  the same guard.
 - **More than one Claude session works in this tree at once.** That produced
   three real failures: two fetch processes writing the same parquet paths, a
   `taskkill` from one session written into another's docstring as a crash it
@@ -777,7 +809,7 @@ sleep gap (max 13h) are marked, because a real book would not have one.
 
 ---
 
-## 12. Hedging frequency vs cost (§7 step 1)
+## 12. Hedging frequency vs cost
 
 `scripts/hedge_frequency.py`, 18 tests. Answers the question §5 left open:
 the surviving premium is about the size of realistic costs, so does *any*
@@ -796,12 +828,12 @@ ask per instrument, so each expiry gets a half-spread curve in vol points,
 synthetic strike and clamped at the ends like the surface itself. Measured
 half-spreads run 1.3–1.5 vol points at 8 hours to expiry down to ~0.36 at
 two months — which on a 30-day ATM straddle is ~11 bps of spot, against the
-~8.6 bps §11.5 measured independently on the live book. Only the hedge leg's
+~8.6 bps §10.5 measured independently on the live book. Only the hedge leg's
 cost is a parameter, because the hourly index carries no book to measure.
 
 At zero costs the P&L reduces to `vrp_surface`'s to the last bit — asserted
 over 50 random paths per option type in the tests, and confirmed on real
-data below, where gross at 4h comes back as **+83 bps, exactly §11.2's
+data below, where gross at 4h comes back as **+83 bps, exactly §10.2's
 published number.** This is a cost model bolted onto that result, not a
 second calculation of it.
 
@@ -836,7 +868,7 @@ Ten bps is negative at every frequency. Hourly hedging is the worst cell in
 the table at 15x turnover — it spends 75 bps to collect 83.
 
 The rest, briefly: **BTC 7-day** 2023-26 is flat-to-negative everywhere.
-**The BTC call wing** — the other 2023-26 survivor in §11.2 — does not clear
+**The BTC call wing** — the other 2023-26 survivor in §10.2 — does not clear
 costs either, best case +3 bps (t 0.2) at 6–12h. **ETH** is negative nearly
 everywhere in 2023-26, down to -128 bps at 1h / 10 bps. **2020-22 is the
 exception that holds**: BTC 7-day ATM keeps +143 bps (t 2.4) at 5 bps, and
@@ -861,7 +893,7 @@ All three families are the same walk over the same hourly path, differing only
 in when they say "trade" — so a clock rule expressed this way reproduces the
 old vectorised implementation *exactly* (asserted over 200 random combinations
 plus a parametrised sweep), which in turn reproduces `vrp_surface` exactly.
-The chain from §11.2 to a band's number is checked link by link rather than
+The chain from §10.2 to a band's number is checked link by link rather than
 assumed.
 
 BTC 30-day ATM, 2023-26, 5 bps slippage:
@@ -977,13 +1009,10 @@ draw, and n is 65-70 overlapping monthly inceptions.
 ### Running it
 
 ```bash
-python scripts/hedge_frequency.py walkforward              # warmup 6
+python scripts/hedge_frequency.py run          # fit + sweep + report, 5m18s
+python scripts/hedge_frequency.py report       # re-print from saved cells
+python scripts/hedge_frequency.py walkforward  # choose the rule blind (§12.2)
 python scripts/hedge_frequency.py walkforward --warmup 12
-```
-
-```bash
-python scripts/hedge_frequency.py run      # fit + sweep + report, 2m52s
-python scripts/hedge_frequency.py report   # re-print from saved cells
 ```
 
 `run` owns `data/research/hedge_fits` and `hedge_cells` and clears them
@@ -992,7 +1021,7 @@ rather than averaging it — globbed together, every day is counted twice, the
 means barely move and the t-statistics inflate by ~sqrt(2).
 
 **Run it locally.** Measured throughput is ~1.05 archive-day/s for the fit
-and ~1.04 sweep-cell/s at `--workers 4`, so projected minutes are about
+and ~0.5 sweep-cell/s at `--workers 4`, so projected minutes are about
 `(days + cells x 2) / 60`, the 2 being the cost of walking the full hourly
 path now that a band may trade at any hour. The 128-cell policy grid is
 5m18s measured; it takes roughly 800 cells — a new strike or tenor axis, or

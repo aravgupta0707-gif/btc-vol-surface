@@ -3,7 +3,7 @@ Tests for the rebalancing rules.
 
 The load-bearing one is the first: a clock rule walked over the full hourly
 path must reproduce the vectorised implementation walked over the subsampled
-path, exactly. That is what makes a band's number comparable to §11.2's --
+path, exactly. That is what makes a band's number comparable to §10.2's --
 `hedged_seller_pnl` is already asserted equal to `vrp_surface` at zero cost,
 so the chain runs published result -> vectorised -> walker -> band, with every
 link checked rather than assumed.
@@ -59,7 +59,7 @@ def test_clock_rule_reproduces_the_vectorised_implementation(interval):
     """
     Walked hourly under a clock, the held hedge is constant between trades, so
     the P&L must telescope to the subsampled calculation. If it does not, a
-    band's number cannot be read against §11.2's.
+    band's number cannot be read against §10.2's.
     """
     rng = np.random.default_rng(interval)
     for _ in range(12):
