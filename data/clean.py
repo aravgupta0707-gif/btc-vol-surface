@@ -68,7 +68,7 @@ def time_to_expiry_years(expiry_ts, as_of_ts) -> float:
     return (expiry - as_of).total_seconds() / SECONDS_PER_YEAR
 
 
-def compute_mid(df: pd.DataFrame) -> pd.DataFrame:
+def compute_mid(df: pd.DataFrame, drop_wide: bool = True) -> pd.DataFrame:
     """
     Add a 'mid' column and drop quotes that fail the cleaning rules.
 
@@ -100,6 +100,18 @@ def compute_mid(df: pd.DataFrame) -> pd.DataFrame:
     spread in vol points (invert bid and ask separately, require the gap
     below some threshold), which needs the Phase 2 inverter and belongs
     downstream of it.
+
+    **`drop_wide=False` keeps the wide ones.** The width rule asks whether a
+    quote is informative enough to fit a surface through. That is the wrong
+    question when the caller already holds the option and only needs to mark
+    it and hedge it: a live two-sided market is tradeable at whatever width
+    the maker is showing. The distinction is not academic. A one-day ATM
+    straddle quoted 0.0024/0.0028 is 15.4% wide and ordinary, and dropping
+    it does not exclude a bad price -- it removes the position's only mark,
+    which freezes the hedge at its last value with nothing to say so. That
+    is what it did to `hold_to_expiry` (HANDOFF.md section 10.5). The
+    columns are still computed either way, so a caller that wants to know
+    how wide its fills were can still ask.
     """
     out = df.copy()
     out = out[out["bid"].notna() & out["ask"].notna()]
@@ -110,6 +122,9 @@ def compute_mid(df: pd.DataFrame) -> pd.DataFrame:
     spread = out["ask"] - out["bid"]
     out["spread_pct"] = spread / out["mid"]
     out["spread_ticks"] = spread / tick_size(out["mid"])
+
+    if not drop_wide:
+        return out.reset_index(drop=True)
 
     # Both thresholds sit exactly on values the exchange actually quotes, so
     # binary float error decides membership: 0.0008 - 0.0006 evaluates to
@@ -194,7 +209,8 @@ def select_otm(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def clean_snapshot(
-    df: pd.DataFrame, as_of_ts=None, otm_only: bool = True
+    df: pd.DataFrame, as_of_ts=None, otm_only: bool = True,
+    drop_wide: bool = True,
 ) -> pd.DataFrame:
     """
     Full cleaning pipeline: quote filters, time to expiry, forward, USD
@@ -202,8 +218,11 @@ def clean_snapshot(
 
     Returns a frame ready for implied-vol inversion, carrying at minimum
     strike, T, forward, log_moneyness, mid_usd and option_type.
+
+    `drop_wide=False` is for marking a position already held rather than
+    fitting a surface; see `compute_mid`.
     """
-    out = compute_mid(df)
+    out = compute_mid(df, drop_wide=drop_wide)
     out = add_forward_and_expiry(out, as_of_ts)
     out = to_usd(out)
     if otm_only:

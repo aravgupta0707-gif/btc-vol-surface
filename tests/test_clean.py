@@ -144,6 +144,38 @@ class TestQuoteFilters:
         assert out["spread_pct"].iloc[0] > 0.15
         assert out["spread_ticks"].iloc[0] == pytest.approx(2.0)
 
+    def test_a_held_position_keeps_its_wide_quote(self):
+        """
+        `drop_wide=False` is for marking an option already held. The real case
+        that forced it: a one-day ATM straddle quoted 0.0024/0.0028 is 15.4%
+        wide and four ticks, so both rules reject it -- and it is an entirely
+        ordinary market that a book holding the option must be able to mark.
+        Dropping it froze `hold_to_expiry`'s hedge part-way through most of
+        its positions, silently, because a position with no mark simply stops
+        being stepped.
+        """
+        frame = make_frame([make_row(bid=0.0024, ask=0.0028)])
+        assert compute_mid(frame).empty
+        kept = compute_mid(frame, drop_wide=False)
+        assert len(kept) == 1
+        assert kept["spread_pct"].iloc[0] > 0.15
+        assert kept["spread_ticks"].iloc[0] > 2
+
+    def test_keeping_wide_quotes_still_drops_the_unquotable(self):
+        """`drop_wide` relaxes the width rule and nothing else. A quote with no
+        bid is not a wide market, it is no market, and it stays dropped."""
+        for row in (make_row(bid=0.0, ask=0.005), make_row(bid=np.nan),
+                    make_row(bid=MIN_MID_BTC / 4, ask=MIN_MID_BTC / 2)):
+            assert compute_mid(make_frame([row]), drop_wide=False).empty
+
+    def test_keeping_wide_quotes_changes_nothing_for_tight_ones(self):
+        """The default path must be untouched: every other study depends on it."""
+        frame = make_frame([make_row(bid=0.0100, ask=0.0104)])
+        tight = compute_mid(frame)
+        assert len(tight) == 1
+        relaxed = compute_mid(frame, drop_wide=False)
+        pd.testing.assert_frame_equal(tight, relaxed)
+
     def test_many_ticks_wide_is_still_dropped(self):
         # Same cheap premium, but five ticks wide: the tick allowance is a
         # floor, not a licence to keep everything cheap.
