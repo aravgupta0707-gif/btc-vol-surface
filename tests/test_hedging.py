@@ -11,6 +11,11 @@ link checked rather than assumed.
 The rest guard the two ways a band goes quietly wrong: a width that does not
 respond to what it is supposed to respond to, and a degenerate case (no gamma,
 no cost, expired) that trades when it should not or vice versa.
+
+The last section closes the other half of the loop. `hold_to_expiry` hedges the
+live book on this same rule, so the width it uses is asserted equal to the one
+the sweep used -- from both ends, because a second implementation that drifted
+would leave the live cost number quietly unreadable against section 12's table.
 """
 
 from __future__ import annotations
@@ -20,9 +25,11 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from strategy import hedging
+from strategy.straddle import Costs, DeltaHedgedStraddle, Position
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -172,3 +179,66 @@ def test_unknown_rule_is_refused():
 def test_an_unsellable_quote_is_still_refused():
     out = walk_atm("fixed", 0.05, sigma=0.20, half_spread_vol=0.25)
     assert out["unsellable"] is True
+
+
+# ---- the live book runs the same rule -----------------------------------
+
+def live_position(quantity: float = 1.0) -> Position:
+    stamp = pd.Timestamp("2026-09-10", tz="UTC")
+    return Position(strike=60_000.0, expiry_ts=stamp + pd.Timedelta(days=30),
+                    entry_ts=stamp, quantity=quantity, premium_received=0.0,
+                    entry_iv=0.6, entry_spot=60_000.0)
+
+
+def live_strategy(risk_aversion: float = 1e-4, slip: float = 5.0):
+    return DeltaHedgedStraddle(rebalance_rule="whalley_wilmott",
+                               risk_aversion=risk_aversion,
+                               costs=Costs(hedge_slippage_bps=slip))
+
+
+F_GRID = np.array([40_000.0, 60_000.0, 95_000.0])
+GAMMA_GRID = np.array([1e-5, 4e-5, 2e-4])
+
+
+@pytest.mark.parametrize("slip", [0.0, 2.0, 5.0, 10.0])
+@pytest.mark.parametrize("risk_aversion", [1e-4, 1e-3, 1e-2])
+def test_the_live_band_is_the_studys_band(risk_aversion, slip):
+    """
+    Same inputs, same width, to the last bit -- including the two degenerate
+    cases, since `slip = 0` is the one that inverts the rule if it is got
+    wrong at only one of the two call sites.
+    """
+    _, want = hedging.policy_arrays("whalley_wilmott", risk_aversion, F_GRID,
+                                    np.full(len(F_GRID), 0.08), GAMMA_GRID, slip)
+    strategy = live_strategy(risk_aversion, slip)
+    position = live_position()
+    got = [strategy.band(position, g, f) for g, f in zip(GAMMA_GRID, F_GRID)]
+    assert got == pytest.approx(list(want), rel=1e-12)
+
+
+def test_the_live_band_scales_with_the_size_of_the_book():
+    """
+    H goes as Gamma^(2/3) and the position's gamma is linear in size, so four
+    times the book tolerates 4^(2/3) times the drift -- which is *less* drift
+    per straddle. Passing the per-straddle gamma straight through would make
+    the band size-blind, and every test at quantity 1 would still pass.
+    """
+    one = live_strategy().band(live_position(1.0), 4e-5, 60_000.0)
+    four = live_strategy().band(live_position(4.0), 4e-5, 60_000.0)
+    assert four / one == pytest.approx(4 ** (2 / 3), rel=1e-12)
+
+
+def test_the_live_band_is_infinite_without_gamma():
+    """Expired or far out of the money: nothing to re-hedge, so no trade."""
+    assert np.isinf(live_strategy().band(live_position(), 0.0, 60_000.0))
+
+
+def test_the_live_rule_refuses_to_guess_at_a_missing_gamma():
+    """
+    A band needs gamma. Defaulting it to zero would read as an infinite band
+    and silently stop hedging the live book for the life of the position,
+    which is the expensive way to find out about a wiring mistake.
+    """
+    with pytest.raises(ValueError, match="needs gamma"):
+        live_strategy().should_rebalance(
+            live_position(), pd.Timestamp("2026-09-10 04:00", tz="UTC"), 0.5)

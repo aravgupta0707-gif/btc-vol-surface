@@ -67,6 +67,42 @@ def target_delta_and_gamma(F, K: float, T_left, sigma: float, option: str):
     return delta, gamma
 
 
+def ww_band(F, gamma, risk_aversion: float, slip_bps: float):
+    """
+    Whalley-Wilmott no-trade half-width, in units of the underlying.
+
+        H = (3/2 * lambda * F * Gamma^2 / gamma)^(1/3)
+
+    for proportional cost `lambda` and risk aversion `gamma`. Discounting is
+    omitted because the whole project prices undiscounted off the forward, so
+    `F` is the forward here and `Gamma` is d(delta)/dF of the whole position.
+
+    Scalars or arrays, because two callers need it: `policy_arrays` reduces a
+    swept path to an array of widths, and `strategy.straddle` asks for one
+    width at one snapshot of the live book. One formula, so the rule the
+    archive study measured and the rule the live book runs cannot drift apart.
+
+    The two degenerate cases both invert the rule if they are got wrong:
+
+    - **No cost.** There is nothing to economise on, so tolerating drift buys
+      nothing: the band collapses to zero, meaning *trade at every
+      opportunity*, not never.
+    - **No gamma** -- expired, or so far out of the money the hedge cannot
+      drift. The band is infinite, which is the correct reading: there is
+      nothing to re-hedge. A finite band here would churn on rounding.
+    """
+    if risk_aversion <= 0:
+        raise ValueError(f"risk aversion must be positive, got {risk_aversion}")
+    gamma = np.asarray(gamma, dtype=float)
+    lam = slip_bps / 1e4
+    if lam <= 0:
+        return np.zeros(gamma.shape)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        H = np.cbrt(1.5 * lam * np.asarray(F, dtype=float) * gamma**2
+                    / float(risk_aversion))
+    return np.where(gamma > 0, H, np.inf)
+
+
 def policy_arrays(kind: str, param: float, F, T_left, gamma, slip_bps: float):
     """
     Reduce a rule to (forced, H): when it must trade, and how far it tolerates.
@@ -92,20 +128,7 @@ def policy_arrays(kind: str, param: float, F, T_left, gamma, slip_bps: float):
         return forced, np.full(n, float(param))
 
     if kind == "whalley_wilmott":
-        if param <= 0:
-            raise ValueError(f"risk aversion must be positive, got {param}")
-        # H = (3/2 * lambda * F * Gamma^2 / gamma)^(1/3). Discounting is
-        # omitted because the whole project prices undiscounted off the
-        # forward. Where gamma is zero (expired, or so far out of the money
-        # the hedge cannot drift) the band is infinite, which is the correct
-        # reading: there is nothing to re-hedge.
-        lam = slip_bps / 1e4
-        if lam <= 0:
-            # A costless hedge has no reason to tolerate drift at all.
-            return forced, np.zeros(n)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            H = np.cbrt(1.5 * lam * F * gamma**2 / float(param))
-        return forced, np.where(gamma > 0, H, np.inf)
+        return forced, ww_band(F, gamma, param, slip_bps)
 
     raise ValueError(f"unknown policy {kind!r}, expected one of {KINDS}")
 

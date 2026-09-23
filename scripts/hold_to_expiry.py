@@ -2,7 +2,8 @@
 Sell and hold to expiry on the live collection: the cost structure a real
 book actually faces.
 
-    python scripts/hold_to_expiry.py
+    python scripts/hold_to_expiry.py            # the Whalley-Wilmott band
+    python scripts/hold_to_expiry.py --clock    # the 4h clock, to compare
 
 The archive study round-tripped every position within a day, paying the
 bid-ask twice for one day of decay -- and found costs of 34-46 bps a day
@@ -13,15 +14,28 @@ contiguous fortnight of hourly chains, which holds every daily expiry and a
 couple of weeklies.
 
 For each expiry in the collection, sell the ATM straddle at the bid 1 day
-(and, where possible, 7 days) before, hedge every 4 hours at whatever
-snapshots exist, and settle at intrinsic against the Deribit index at 08:00
-UTC. No buy-back, no exit spread.
+(and, where possible, 7 days) before, hedge on a Whalley-Wilmott no-trade
+band at whatever snapshots exist, and settle at intrinsic against the
+Deribit index at 08:00 UTC. No buy-back, no exit spread.
+
+**The band, not a clock.** This study hedged every 4 hours until the
+archive work measured the alternative: a band beats the best clock, and
+beats it by more as costs rise (HANDOFF.md section 12.1), and on BTC at 5
+bps that survives being chosen without hindsight (section 12.2). Risk
+aversion is 1e-4 -- the value the blind walk-forward actually picks, not
+the 1e-3 that wins in hindsight. So the live cost measurement and the
+archive study now run the same rule, and `strategy.hedging.ww_band` is the
+single implementation of it.
 
 **This is a handful of positions over one fortnight of one regime.** It
 measures what the cost structure looks like when the spread is paid once,
 not whether the strategy has edge. Laptop sleep leaves hedging gaps; the
 longest gap per position is reported, and positions left unhedged for more
-than 8 hours are marked, because a real book would not be.
+than 8 hours are marked, because a real book would not be. `hedge_points`
+counts the steps the straddle could actually be priced at, and the gaps are
+measured between those -- not between the snapshots on disk, which is a
+weaker thing to check and was silently passing positions that spent most of
+their life unhedged.
 """
 
 from __future__ import annotations
@@ -37,6 +51,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 HORIZONS = {"1d": pd.Timedelta(days=1), "7d": pd.Timedelta(days=7)}
+# The band reads the slippage it is economising on, so these two travel
+# together: change the cost and the rule rewidens on its own.
+SLIPPAGE_BPS = 5.0
+RISK_AVERSION = 1e-4
+CLOCK_HOURS = 4.0  # the rule this study used before the band, kept to compare against
 ENTRY_TOLERANCE = pd.Timedelta(hours=3)
 GAP_LIMIT_HOURS = 8.0
 
@@ -64,7 +83,13 @@ def snapshots_for(chain, expiry, start, end) -> list[pd.DataFrame]:
         rows = raw[raw["expiry_ts"] == expiry]
         if rows.empty:
             continue
-        clean = clean_snapshot(rows, as_of_ts=stamp, otm_only=False)
+        # `drop_wide=False`: we hold this straddle, so a live two-sided
+        # market marks and hedges it however wide the maker is showing.
+        # The default rule is calibrated for surface fitting and rejects
+        # ordinary one-day ATM quotes, which used to freeze the hedge
+        # part-way through most positions here without saying so.
+        clean = clean_snapshot(rows, as_of_ts=stamp, otm_only=False,
+                               drop_wide=False)
         if clean.empty:
             continue
         clean = clean.assign(iv=implied_vol_many(
@@ -87,7 +112,7 @@ def settle(strategy, position, index_T: float, expiry) -> None:
     position.last_ts, position.last_spot, position.closed = expiry, index_T, True
 
 
-def run(asset: str, index: pd.Series) -> list[dict]:
+def run(asset: str, index: pd.Series, rule: str = "whalley_wilmott") -> list[dict]:
     from strategy.backtest import run_backtest
     from strategy.straddle import Costs, DeltaHedgedStraddle
 
@@ -119,8 +144,10 @@ def run(asset: str, index: pd.Series) -> list[dict]:
                 rows.append(dict(base, skipped="not listed (or not quotable) at entry"))
                 continue
             strategy = DeltaHedgedStraddle(
-                rebalance_rule="fixed_interval", rebalance_interval_hours=4.0,
-                costs=Costs(hedge_slippage_bps=5.0, funding_rate_8h=0.0001))
+                rebalance_rule=rule, risk_aversion=RISK_AVERSION,
+                rebalance_interval_hours=CLOCK_HOURS,
+                costs=Costs(hedge_slippage_bps=SLIPPAGE_BPS,
+                            funding_rate_8h=0.0001))
             try:
                 result = run_backtest(snaps, strategy, expiry_ts=expiry, close_at_end=False)
             except ValueError as exc:
@@ -138,7 +165,13 @@ def run(asset: str, index: pd.Series) -> list[dict]:
             settle(strategy, position, S_T, expiry)
             total = strategy.mark_to_market(position)
             gross = total + position.slippage_paid + position.entry_spread_cost
-            stamps = [pd.Timestamp(s["timestamp"].iloc[0]) for s in snaps] + [expiry]
+            # Gaps between the steps the position was actually *marked* at,
+            # not between the snapshots that happened to exist. A snapshot
+            # the straddle cannot be priced in hedges nothing, so counting
+            # it here reported a 3h gap on a position that in truth went 18h
+            # unhedged -- the guard was blind to the failure it exists for.
+            stamps = ([entry] + [pd.Timestamp(t) for t in result["timestamp"]]
+                      + [expiry])
             gaps = np.diff([s.value for s in stamps]) / 3.6e12
             life = index.loc[entry.floor("h"):settle_hour]
             realized = float(np.std(np.diff(np.log(life.to_numpy(float))), ddof=1)
@@ -147,7 +180,9 @@ def run(asset: str, index: pd.Series) -> list[dict]:
             rows.append(dict(
                 base, skipped="", entry=entry,
                 hours=(expiry - entry).total_seconds() / 3600,
-                hedge_points=len(snaps), max_gap_h=float(gaps.max()),
+                hedge_points=len(result), snapshots=len(snaps),
+                max_gap_h=float(gaps.max()),
+                rebalances=position.rebalances,
                 hedged_properly=bool(gaps.max() <= GAP_LIMIT_HOURS),
                 sold_iv=position.entry_iv, realized=realized,
                 premium_bps=position.premium_received / spot * 1e4,
@@ -159,16 +194,25 @@ def run(asset: str, index: pd.Series) -> list[dict]:
     return rows
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     from data.history import hourly_funding
+
+    argv = list(sys.argv[1:] if argv is None else argv)
+    rule = "fixed_interval" if "--clock" in argv else "whalley_wilmott"
 
     rows = []
     for asset in ("BTC", "ETH"):
         index = hourly_funding(asset).set_index("time")["index_price"]
-        rows += run(asset, index)
+        rows += run(asset, index, rule)
     frame = pd.DataFrame(rows)
-    out = ROOT / "data" / "research" / "hold_to_expiry.parquet"
+    # Separate files, because the two are meant to be read side by side and
+    # a run under one rule must not quietly overwrite the other's numbers.
+    suffix = "_clock" if rule == "fixed_interval" else ""
+    out = ROOT / "data" / "research" / f"hold_to_expiry{suffix}.parquet"
     frame.to_parquet(out, index=False)
+    print(f"rule: {rule}"
+          + (f", every {CLOCK_HOURS:g}h" if rule == "fixed_interval"
+             else f", risk aversion {RISK_AVERSION:g}"))
 
     done = frame[frame["skipped"] == ""]
     pd.set_option("display.width", 200)
@@ -177,8 +221,9 @@ def main() -> int:
               f"({int(grp.hedged_properly.sum())} hedged without an 8h+ gap)")
         show = grp.assign(expiry=grp.expiry.dt.strftime("%d%b %Hh"),
                           sold=grp.sold_iv * 100, real=grp.realized * 100)
-        print(show[["expiry", "hours", "hedge_points", "max_gap_h", "sold", "real",
-                    "premium_bps", "gross_bps", "spread_bps", "net_bps"]]
+        print(show[["expiry", "hours", "hedge_points", "rebalances", "max_gap_h",
+                    "sold", "real", "premium_bps", "gross_bps", "spread_bps",
+                    "net_bps"]]
               .round(1).to_string(index=False))
         ok = grp[grp.hedged_properly]
         for label, sub in (("all", grp), ("hedged properly", ok)):

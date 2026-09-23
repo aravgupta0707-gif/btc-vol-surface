@@ -150,6 +150,50 @@ class TestHedging:
         strategy.step(position, frames[1], frames[1]["timestamp"].iloc[0])
         assert position.rebalances == 1
 
+    def test_whalley_wilmott_holds_through_a_small_move(self):
+        strategy = DeltaHedgedStraddle(rebalance_rule="whalley_wilmott")
+        frames = path([80_000.0, 80_100.0])
+        position = strategy.enter(frames[0], EXPIRY, frames[0]["timestamp"].iloc[0])
+        strategy.step(position, frames[1], frames[1]["timestamp"].iloc[0])
+        assert position.rebalances == 0
+
+    def test_whalley_wilmott_trades_on_a_large_move(self):
+        strategy = DeltaHedgedStraddle(rebalance_rule="whalley_wilmott")
+        frames = path([80_000.0, 92_000.0])
+        position = strategy.enter(frames[0], EXPIRY, frames[0]["timestamp"].iloc[0])
+        strategy.step(position, frames[1], frames[1]["timestamp"].iloc[0])
+        assert position.rebalances == 1
+
+    def test_whalley_wilmott_trades_less_as_slippage_rises(self):
+        """
+        The whole reason to prefer it to a clock: the rule reads the cost it
+        is economising on. A clock cannot, at any interval, and a band that
+        ignored cost would look identical on every other test here.
+        """
+        spots = [80_000.0, 82_000.0, 79_000.0, 84_000.0, 81_000.0, 86_000.0]
+        counts = []
+        for slip in (0.5, 5.0, 50.0):
+            strategy = DeltaHedgedStraddle(
+                rebalance_rule="whalley_wilmott",
+                costs=Costs(hedge_slippage_bps=slip))
+            frames = path(spots)
+            position = strategy.enter(frames[0], EXPIRY,
+                                      frames[0]["timestamp"].iloc[0])
+            for frame in frames[1:]:
+                strategy.step(position, frame, frame["timestamp"].iloc[0])
+            counts.append(position.rebalances)
+        assert counts == sorted(counts, reverse=True)
+        assert counts[0] > counts[-1]
+
+    def test_an_unknown_rebalance_rule_is_refused(self):
+        """It used to fall through to the clock, so a typo in a study script
+        ran a different rule than the one its report claimed."""
+        strategy = DeltaHedgedStraddle(rebalance_rule="whalley_wilmot")
+        frames = path([80_000.0, 92_000.0])
+        position = strategy.enter(frames[0], EXPIRY, frames[0]["timestamp"].iloc[0])
+        with pytest.raises(ValueError, match="unknown rebalance rule"):
+            strategy.step(position, frames[1], frames[1]["timestamp"].iloc[0])
+
     def test_fixed_interval_rule_waits_for_the_interval(self):
         strategy = DeltaHedgedStraddle(rebalance_interval_hours=8.0)
         frames = path([80_000.0, 90_000.0], hours=4.0)

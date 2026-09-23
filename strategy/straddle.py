@@ -7,9 +7,13 @@ being able to decompose backtest P&L this way is the core interview point.
 
 Decisions made explicit rather than left implicit in code:
 
-**Rebalance rule.** Fixed interval or delta band, selectable. The band trades
-less in calm markets and more in violent ones, which is the right shape for a
-short-gamma position, at the cost of an extra parameter to justify.
+**Rebalance rule.** Three, selectable: a fixed clock, a fixed delta band, and
+the Whalley-Wilmott band. A band trades less in calm markets and more in
+violent ones, which is the right shape for a short-gamma position, at the
+cost of an extra parameter to justify. `whalley_wilmott` is the one the
+archive study found actually beats a clock out of sample on BTC at realistic
+costs (HANDOFF.md sections 12.1 and 12.2); its width comes from
+`strategy.hedging.ww_band`, shared with the study so the two cannot diverge.
 
 **Marking.** Positions are marked against the actual quotes in each snapshot,
 not against the fitted surface. The surface is the strategy's view of fair
@@ -43,6 +47,8 @@ import pandas as pd
 
 SECONDS_PER_HOUR = 3600.0
 
+REBALANCE_RULES = ("fixed_interval", "delta_band", "whalley_wilmott")
+
 
 @dataclass
 class Costs:
@@ -59,9 +65,14 @@ class Costs:
 
 @dataclass
 class StraddleConfig:
-    rebalance_rule: str = "fixed_interval"  # or "delta_band"
+    rebalance_rule: str = "fixed_interval"  # or "delta_band", "whalley_wilmott"
     rebalance_interval_hours: float = 4.0
     delta_band: float = 0.05
+    # Risk aversion for the Whalley-Wilmott band. 1e-4 is what the blind
+    # walk-forward picks on 58-74 of 70-74 inceptions (HANDOFF.md section
+    # 12.2), not the 1e-3 that wins in hindsight -- taking the hindsight
+    # value would reintroduce exactly the selection the walk-forward removed.
+    risk_aversion: float = 1e-4
     quantity: float = 1.0  # straddles, each one call plus one put on 1 BTC
     costs: Costs = field(default_factory=Costs)
 
@@ -133,28 +144,36 @@ class DeltaHedgedStraddle:
         return float(strikes[int(np.argmin(np.abs(strikes - forward)))])
 
     def _straddle_value(self, quotes: pd.DataFrame, expiry_ts, strike: float,
-                        side: str) -> tuple[float, float, float]:
+                        side: str) -> tuple[float, float, float, float]:
         """
-        (value, delta, iv) of one straddle from the snapshot's own quotes.
+        (value, delta, gamma, iv) of one straddle from the snapshot's own
+        quotes.
 
         `side` is 'bid' when we are selling into the market, 'mid' for
         marking, 'ask' when buying back.
+
+        Gamma is here for the Whalley-Wilmott band, which needs it at every
+        snapshot. Note it comes from each leg's *current* market vol rather
+        than the vol the straddle was sold at, so the band responds to the
+        smile the book actually faces.
         """
         legs = self._legs(quotes, expiry_ts, strike)
         if len(legs) < 2:
-            return np.nan, np.nan, np.nan
+            return np.nan, np.nan, np.nan, np.nan
         column = {"bid": "bid_usd", "mid": "mid_usd", "ask": "ask_usd"}[side]
         value = float(legs[column].sum())
         # Delta of the straddle we are short is -(delta_call + delta_put).
         # Reported here as the long-straddle delta; the caller applies sign.
         from pricing.black76 import greeks as black76_greeks
 
-        delta = 0.0
+        delta = gamma = 0.0
         for leg in legs.itertuples():
-            delta += black76_greeks(
+            leg_greeks = black76_greeks(
                 leg.forward, leg.strike, leg.T, leg.iv, leg.option_type
-            )["delta"]
-        return value, float(delta), float(legs["iv"].mean())
+            )
+            delta += leg_greeks["delta"]
+            gamma += leg_greeks["gamma"]
+        return value, float(delta), float(gamma), float(legs["iv"].mean())
 
     # ---- lifecycle ------------------------------------------------------
 
@@ -166,10 +185,12 @@ class DeltaHedgedStraddle:
             return None
 
         side = "bid" if self.config.costs.cross_spread else "mid"
-        received, long_delta, iv = self._straddle_value(
+        received, long_delta, _, iv = self._straddle_value(
             quotes, expiry_ts, strike, side
         )
-        mid_value, _, _ = self._straddle_value(quotes, expiry_ts, strike, "mid")
+        mid_value, _, _, _ = self._straddle_value(
+            quotes, expiry_ts, strike, "mid"
+        )
         if not np.isfinite(received) or not np.isfinite(long_delta):
             return None
 
@@ -205,13 +226,52 @@ class DeltaHedgedStraddle:
         position.hedge_units = target_units
 
     def should_rebalance(self, position: Position, as_of_ts,
-                         current_delta: float) -> bool:
-        if self.config.rebalance_rule == "delta_band":
+                         current_delta: float, gamma: float | None = None,
+                         forward: float | None = None) -> bool:
+        """
+        Has the hedge drifted far enough -- or waited long enough -- to trade?
+
+        `current_delta` is the drift: the target delta less the hedge held.
+        The band rules read it directly; the clock ignores it entirely.
+        """
+        rule = self.config.rebalance_rule
+        if rule == "fixed_interval":
+            elapsed = (
+                pd.Timestamp(as_of_ts) - pd.Timestamp(position.last_rebalance_ts)
+            ).total_seconds() / SECONDS_PER_HOUR
+            return elapsed >= self.config.rebalance_interval_hours - 1e-9
+        if rule == "delta_band":
             return abs(current_delta) > self.config.delta_band
-        elapsed = (
-            pd.Timestamp(as_of_ts) - pd.Timestamp(position.last_rebalance_ts)
-        ).total_seconds() / SECONDS_PER_HOUR
-        return elapsed >= self.config.rebalance_interval_hours - 1e-9
+        if rule == "whalley_wilmott":
+            if gamma is None or forward is None:
+                raise ValueError(
+                    "the Whalley-Wilmott band needs gamma and the forward; "
+                    "call should_rebalance from step(), which supplies both"
+                )
+            return abs(current_delta) > self.band(position, gamma, forward)
+        raise ValueError(
+            f"unknown rebalance rule {rule!r}, expected one of {REBALANCE_RULES}"
+        )
+
+    def band(self, position: Position, gamma: float, forward: float) -> float:
+        """
+        The Whalley-Wilmott half-width for this position, right now.
+
+        Shared with `strategy.hedging`, so the rule the archive study
+        measured and the rule the live book runs cannot drift apart.
+
+        `gamma` arrives per straddle and is scaled to the whole position
+        before the formula sees it, because the band is a tolerance on the
+        position's own delta drift -- which is what `step` compares it
+        against. H then grows as q^(2/3) while the drift grows as q, so a
+        larger book tolerates proportionally less drift. That is the
+        formula's shape rather than an approximation of it.
+        """
+        from strategy.hedging import ww_band
+
+        return float(ww_band(forward, gamma * position.quantity,
+                             self.config.risk_aversion,
+                             self.config.costs.hedge_slippage_bps))
 
     def step(self, position: Position, quotes: pd.DataFrame, as_of_ts) -> dict:
         """
@@ -236,7 +296,7 @@ class DeltaHedgedStraddle:
             * self.config.costs.funding_rate_8h * (hours / 8.0)
         )
 
-        mid_value, long_delta, iv = self._straddle_value(
+        mid_value, long_delta, gamma, iv = self._straddle_value(
             quotes, position.expiry_ts, position.strike, "mid"
         )
         if np.isfinite(mid_value):
@@ -247,7 +307,8 @@ class DeltaHedgedStraddle:
         if np.isfinite(long_delta):
             target = long_delta * position.quantity
             net_delta = target - position.hedge_units
-            if self.should_rebalance(position, as_of_ts, net_delta):
+            if self.should_rebalance(position, as_of_ts, net_delta,
+                                     gamma=gamma, forward=spot):
                 self._set_hedge(position, target, spot, charge_slippage=True)
                 position.last_rebalance_ts = as_of_ts
                 position.rebalances += 1
@@ -264,10 +325,10 @@ class DeltaHedgedStraddle:
     def close(self, position: Position, quotes: pd.DataFrame, as_of_ts) -> float:
         """Buy the straddle back at the ask and flatten the hedge."""
         side = "ask" if self.config.costs.cross_spread else "mid"
-        value, _, _ = self._straddle_value(
+        value, _, _, _ = self._straddle_value(
             quotes, position.expiry_ts, position.strike, side
         )
-        mid_value, _, _ = self._straddle_value(
+        mid_value, _, _, _ = self._straddle_value(
             quotes, position.expiry_ts, position.strike, "mid"
         )
         if np.isfinite(value):
