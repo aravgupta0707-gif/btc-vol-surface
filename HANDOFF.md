@@ -1,8 +1,9 @@
 # Handoff
 
 Everything needed to pick this project up cold. Written 2026-09-09, updated
-2026-09-22 after the archive completed, the six-year studies ran (§10), and
-the hedging-rule work closed §7 step 1 (§12, §12.1, §12.2).
+2026-09-23 after the archive completed, the six-year studies ran (§10), the
+hedging-rule work landed (§12, §12.1, §12.2), and putting that rule on the
+live book turned up a marking bug that had been freezing its hedge (§10.5).
 
 **The repository has a remote now**: `origin` is
 `github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
@@ -17,8 +18,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **394 tests, 34
-commits, 10,744 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **416 tests, 36
+commits, 11,041 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -54,6 +55,7 @@ python scripts/vrp_surface.py        # premium by strike and tenor  [8m02s]
 python scripts/cross_asset.py        # BTC vs ETH (needs vrp_surface first)
 python scripts/carry_study.py        # forward curve vs funding
 python scripts/hold_to_expiry.py     # Track A, settled at expiry  [~4 min]
+python scripts/hold_to_expiry.py --clock       # the same, on the old 4h clock
 python scripts/hedge_frequency.py run          # rebalancing rule vs cost [~5 min]
 python scripts/hedge_frequency.py walkforward  # the same, chosen blind (§12.2)
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
@@ -375,7 +377,7 @@ does, and 70-90% of the in-sample level is reachable. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
-**Track A is not contiguous.** ~13 days of hourly snapshots with sleep
+**Track A is not contiguous.** ~16 days of hourly snapshots with sleep
 gaps. Long holds and anything needing an unbroken path are limited by it;
 positions left unhedged over a gap are marked in `hold_to_expiry`.
 
@@ -439,15 +441,27 @@ without hindsight, on ETH it never does. It is still not a trade — the best
 honest cell is ~+59 to +75 bps at t 1.4-2.1 over 65-70 overlapping monthly
 inceptions.
 
+**Done, 2026-09-23: the band is on the live book.** `strategy.hedging.walk`
+could not be swapped in literally — it walks one option at a constant vol
+over a spot path, while the live book is snapshot-driven with two legs and
+market vols that move. What transfers is the rule, so `ww_band` is now one
+shared function called by both the sweep and a `whalley_wilmott` rule in
+`DeltaHedgedStraddle`, with tests asserting the two call sites return the
+same width. It was not mechanical: it exposed the marking freeze in §10.5,
+which had to be fixed before any live cost number meant anything. Read
+§10.5 before trusting the daily rows — at one day the band barely trades,
+and that is outside where §12.2 validated it.
+
 In priority order from here:
 
-1. **Put the band on the live book.** `hold_to_expiry` (§10.5) is the only
-   study running on Track A and still hedges on a 4h clock — the rule now
-   known to be weaker. Swap in `strategy.hedging.walk`. Use **gamma = 1e-4**,
-   which is what the walk-forward actually picks (§12.2), not the 1e-3 that
-   wins in hindsight (§12.1); taking the hindsight value would reintroduce
-   exactly the selection §12.2 removed. Small, mechanical, and it makes the
-   live cost measurement consistent with the archive study.
+1. **Decide what the live book should do at one day.** The band as
+   parameterised is a no-hedge rule there (§10.5), which is a position, not
+   a replication. Three honest options: walk gamma forward on short tenors
+   the way §12.2 did on 7- and 30-day, cap the band at some fraction of the
+   straddle's delta range, or stop selling dailies and hold the tenors the
+   rule was actually validated on. The first is the only one that produces
+   evidence, and Track A now has enough dailies to start. Do not pick by
+   which table looks best — that is what §12.2 exists to prevent.
 
 2. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and
@@ -742,15 +756,79 @@ is a shrunk, mean-reverting forecast of a much noisier series.
 
 ### 10.5 Held to expiry on live data — `hold_to_expiry.py`
 
-The realistic cost structure: sell at the bid 1 or 7 days out, hedge every
-4h, settle at intrinsic against the 08:00 index — **spread paid once**.
-19 positions over one fortnight (9 BTC daily, 8 ETH daily, 1 weekly each).
+The realistic cost structure: sell at the bid 1 or 7 days out, hedge on the
+Whalley-Wilmott band, settle at intrinsic against the 08:00 index — **spread
+paid once**. 23 positions over 16 days (11 BTC daily, 10 ETH daily, 1
+weekly each). `--clock` re-runs the same inceptions on the old 4h clock.
 
-The cost number is the point: **~8.6 bps of spread on a ~125 bps premium,
-about 7%**, against 34-46 bps a day for the round trip in §10.1. Outcomes
-over a fortnight of one regime are not a result — the BTC dailies mean -8.6
-bps gross with one -271 bps day on 19 September — and positions spanning a
-sleep gap (max 13h) are marked, because a real book would not have one.
+The cost number: **9.4 bps of spread on a 147 bps premium, about 6%**,
+against 34-46 bps a day for the round trip in §10.1. Outcomes over 16 days
+of one regime are not a result — the dailies mean -14 bps gross with a
+standard deviation of 119.
+
+#### The hedge was frozen, and the guard did not see it
+
+Putting a band on the book meant looking at *when* it traded, which is how
+this surfaced. `compute_mid`'s wide-spread filter rejects ordinary one-day
+ATM quotes — a real one: BTC 79,500 straddle at 0.0024/0.0028, which is
+15.4% wide and four ticks, so both the relative and the tick rule reject it.
+That filter asks whether a quote is good enough to *fit a surface through*.
+For an option already held it is the wrong question, and dropping the quote
+does not exclude a bad price: it removes the position's only mark, and an
+unmarked position is never stepped, so the hedge froze at its last value.
+On a typical BTC daily, 6 of 23 snapshots marked and the hedge sat unchanged
+for 17 of the position's 24 hours.
+
+**`max_gap_h` was measuring the wrong thing**, which is why nothing caught
+it. It took gaps between the snapshots on disk rather than between the steps
+the position was actually marked at, so it reported 3.0h on a position that
+went 18h unhedged, and then set `hedged_properly`. The guard was blind to
+precisely the failure it exists for. Both are fixed: `clean_snapshot` takes
+`drop_wide=False` for marking a held position, and the gaps are measured
+between marked steps. `hedge_points` now counts marks, `snapshots` counts
+what was on disk; the two differing is the diagnostic.
+
+What it cost the old numbers, BTC dailies, before and after the fix:
+
+| | rebalances | slippage | gross |
+|---|---|---|---|
+| clock, frozen | 0.6 | 1.3 bps | -8.5 |
+| clock, repaired | 2.4 | 6.8 bps | -4.0 |
+
+So this section used to quote the cost of a hedge that had largely stopped
+running. **§10.1 and §12 are unaffected** — checked, not assumed: the
+archive study holds weeklies and monthlies, whose ATM premium is large
+enough that the relative spread is never near 15%, and 313 of its 314
+positions run the full 22 hours at 4.8 rebalances. The freeze needs a small
+premium, so it only ever bit the short-dated live book.
+
+#### What the band does here
+
+Same 23 inceptions, repaired pipeline, clock → band:
+
+| block | n | rebalances | gross | net |
+|---|---|---|---|---|
+| BTC 1d | 11 | 2.4 → 0.6 | -4.0 → **+3.1** | -19.2 → -10.4 |
+| ETH 1d | 10 | 2.5 → 0.1 | -21.0 → **-33.6** | -38.9 → -45.5 |
+| BTC 7d | 1 | 23 → 4 | +138.9 → +204.8 | +112.6 → +181.4 |
+| ETH 7d | 1 | 23 → 0 | +110.9 → +415.6 | +83.4 → +407.0 |
+
+**At one day the band degenerates into not hedging.** H goes as Gamma^(2/3)
+and Gamma as 1/sqrt(T), so the band widens into expiry: about 0.43-0.56
+delta at one day, against a straddle delta that spans ±1. It is the formula
+behaving correctly, not a bug, but gamma = 1e-4 was walked forward on 7- and
+30-day inceptions (§12.2) and the dailies are extrapolation outside it. The
+live book is mostly dailies, so most of what the band does here is untested
+by §12.2 — treat the daily rows above as a description, not a rule.
+
+**§12.2's BTC/ETH asymmetry reproduces independently.** Apply its own gross
+diagnostic: on BTC the band lifts gross (-4.0 → +3.1), so it is replicating
+better; on ETH it gives up gross (-21.0 → -33.6) and net with it, which is
+the same "lifted net by hedging less" pathology that failed ETH out of
+sample on the archive. Different data, same verdict. That diagnostic keeps
+earning its place as the thing to check first. The ETH 7-day +415.6 is one
+unhedged position over a kind 16 days, n = 1, and is not evidence of
+anything.
 
 ---
 
@@ -835,7 +913,7 @@ ask per instrument, so each expiry gets a half-spread curve in vol points,
 synthetic strike and clamped at the ends like the surface itself. Measured
 half-spreads run 1.3–1.5 vol points at 8 hours to expiry down to ~0.36 at
 two months — which on a 30-day ATM straddle is ~11 bps of spot, against the
-~8.6 bps §10.5 measured independently on the live book. Only the hedge leg's
+9.4 bps §10.5 measured independently on the live book. Only the hedge leg's
 cost is a parameter, because the hourly index carries no book to measure.
 
 At zero costs the P&L reduces to `vrp_surface`'s to the last bit — asserted
