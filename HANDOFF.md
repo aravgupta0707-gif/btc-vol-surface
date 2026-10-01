@@ -29,7 +29,7 @@ commits, 11,041 lines of Python, zero remaining stubs.**
 | Arbitrage validation | done | `check_arbitrage.py` — no violations among quoted strikes |
 | Surface object | done | `verify_surface.py` — 10/10 |
 | Greeks + validation | done | delta matches Deribit to 0.0007 median |
-| Strategy + backtest | **done** | 79-day study, 316 positions — §10 |
+| Strategy + backtest | **done** | 79-day study, 314 positions — §10 |
 | Costs + hedging rule | **done** | 128 cells, clocks vs bands, walked forward — §12 |
 | Write-up | **this file, §10 and §12** | — |
 | Dashboard | **not started** | — |
@@ -349,7 +349,7 @@ Worth keeping because it is the honest half of the story.
 ## 5. Known limitations
 
 **The strategy has no demonstrated edge at a one-day horizon, and the rest
-is marginal against costs.** 316 independent positions over six years say
+is marginal against costs.** 314 independent positions over six years say
 the premium was only capturable in 2021-22, and pooled over the whole
 period there is none even before costs (t 0.1-0.7). What survives in
 2023-26 is BTC 30-day ATM and the call wing at roughly **+83 bps of spot a
@@ -398,6 +398,27 @@ with the forward moving 0.5% and ATM vol 0.2 points. A level inside the
 quoted strikes is still marked "not extrapolated" even though its
 probability integrates over the unquoted left wing. Also, the ETH report
 lists a "below 0" level and says "BTC" in a heading.
+
+**The cleaner is blind to the short end, and it has bitten twice.** The
+quote filters key on *relative* spread, which scales with premium size, so
+cheap short-dated options are rejected for being ordinary. It froze the live
+hedge (§10.5) and it independently stops the archive seeing its own front
+expiries: on 2023-07-01 the chain's 0.33d expiry keeps 0 of its quotes, 1.33d
+keeps 1, 2.33d keeps 5, 6.33d keeps 6, and SVI refuses anything under 8
+points. The shortest *fitted* slice is 6.33d at the median across the archive
+and exceeds 1.0d on 100% of asset-days, so a 1-day tenor comes back
+unsupported everywhere — measured, by running `TENOR_DAYS="1 7 30"`, which
+returned 90,432 rows and zero usable ones.
+
+`clean_snapshot(drop_wide=False)` largely reverses it where it has been
+applied (1.33d goes from 1 point to 10 on that day, 5 to 27 on 2021-01-01),
+but 0.33d still reaches only 2-5, so the shortest anchorable tenor is ~1.33d
+rather than 1.0d. **Deliberately not fixed in the archive fit.** Doing so
+adds points at 7d and 30d too (7.33d: 24 → 33), which moves the fits and so
+re-derives the published numbers in §12, §12.1 and §12.2 — a large blast
+radius to refine a question this project does not need answered. Recorded as
+a limitation, with the live-book fix (§10.5) kept because there it was
+breaking a measurement rather than refining one.
 
 **`dashboard/app.py` is still the original stub.**
 
@@ -454,16 +475,39 @@ and that is outside where §12.2 validated it.
 
 In priority order from here:
 
-1. **Decide what the live book should do at one day.** The band as
-   parameterised is a no-hedge rule there (§10.5), which is a position, not
-   a replication. Three honest options: walk gamma forward on short tenors
-   the way §12.2 did on 7- and 30-day, cap the band at some fraction of the
-   straddle's delta range, or stop selling dailies and hold the tenors the
-   rule was actually validated on. The first is the only one that produces
-   evidence, and Track A now has enough dailies to start. Do not pick by
-   which table looks best — that is what §12.2 exists to prevent.
+**Recalibrated 2026-09-30 against BUILD_GUIDE §0.** This is a
+demonstration piece — "that log is your interview material, it's more valuable
+than the final Sharpe number" — and the brief warns in §1.2 against
+over-engineering the data layer at the expense of the modelling stages. The
+research stages are all complete. **Phase 7, the dashboard and write-up, is
+the only unchecked box in both README and PLAN**, so it is step 1, and the
+former step 1 is closed as out of scope.
 
-2. **The dispersion trade properly** — long ETH vol / short BTC vol,
+*What was dropped, and why:* walking gamma forward at a 1-day tenor needed the
+archive's short end, which needed the cleaner relaxed in the fit, which
+re-derives §12's published numbers. That is a large change to three sections
+marked "settled, do not redo", in service of a trading question the brief
+never asks. The finding is recorded in §5 instead. For the write-up, "the band
+is not validated at one day, and here is the measurement showing why" is a
+better artifact than a 1-day table would have been.
+
+1. **Phase 7 — the write-up.** BUILD_GUIDE §9 is specific about what the
+   README owes: the pipeline diagram, the arbitrage violations found and
+   fixed, final metrics with honest caveats about crypto costs, and a couple
+   of surface snapshots. Today's README is a status list. The four interview
+   talking points §9 lists should have concrete answers ready; three of them
+   are unusually well served by §10 and §12, and the fourth — what would
+   break this in a real market — now has an empirical answer rather than a
+   hypothetical one, in §10.5. **`VIOLATIONS.md` still has an unfilled
+   "Resolution" field**, which is exactly the question §9 says to prepare.
+
+2. **Phase 7 — the dashboard.** `dashboard/app.py` is still the 14-line stub
+   and is the last unstarted build-guide stage. The `VolSurface` object
+   already serves everything it needs, and there is more worth showing than
+   when it was scoped: the RND monitor, the premium-across-the-smile surface,
+   and the rule comparison.
+
+3. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and
    an entry rule on the spread's own history. Still the largest effect found
    (-6.14 vol points a month, t 4.6 conditional) and the least examined. Better
@@ -471,12 +515,6 @@ In priority order from here:
    entry costs, and `strategy/hedging.py` gives it a hedging rule worth using.
    Note the asymmetry §12.2 found — a rule validated on BTC did not transfer to
    ETH — before assuming anything crosses between the two.
-
-3. **Dashboard** — plotly 3D surface, per-expiry smile, RND, backtest P&L.
-   `dashboard/app.py` is still the original stub and this is the last unstarted
-   build-guide stage. The `VolSurface` object already serves everything it
-   needs, and there is more worth showing than when it was scoped: the RND
-   monitor, the premium-across-the-smile surface, and the rule comparison.
 
 4. **Fix the RND tail** (§5): normalise the density over the quoted range, or
    mark a level as extrapolated when its *integration domain* leaves the quoted
@@ -664,7 +702,10 @@ re-printable from saved results in `data/research/` without recomputing.
 ### 10.1 One-day positions, 79 days, both assets — `archive_study.py`
 
 Sell the ATM straddle at 00:00, hedge every 4h, buy it back at 23:00; one
-independent position per archive day. The tenor is **fixed** to a weekly
+independent position per archive day. 79 days x 2 assets x 2 tenors is 316
+attempted and **314 measured**: ETH weekly in March and April 2020 could not
+be opened at all, because no strike had both a call and a put quoted on an
+ETH chain that thin. Every statistic below runs on the 314. The tenor is **fixed** to a weekly
 (>=5d) and a monthly (>=21d) band, because Deribit listed no dailies in 2020
 and several a week by 2026 — "nearest expiry" would have made an era
 comparison a tenor comparison.
@@ -685,7 +726,7 @@ Mean gross P&L, bps of spot per day (the premium captured, before costs):
 Only 2021-22 is consistently positive (t 1.8-2.5 in 7 of 8 cells). Pooled
 over six years there is no significant edge **before** costs (t 0.1-0.7).
 Costs are 34-46 bps a day against that, so net is negative everywhere
-(-27 to -46). Across the 316 positions, gross P&L correlates +0.37 to +0.46
+(-27 to -46). Across the 314 positions, gross P&L correlates +0.37 to +0.46
 with the theoretical variance-gap estimate and shares its sign on 65-70% of
 days: the machinery does what theory says, on a sample large enough to tell.
 
