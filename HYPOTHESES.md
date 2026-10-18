@@ -276,3 +276,57 @@ Known issues, stated up front:
   not as evidence against.
 - This is one more batch of tests on top of about 60. A lone |t| near 2 is
   still not confirmation.
+
+## H6 results
+
+Run: same command, section `H6`. The predictions above were committed
+(`d5fc7b9`) before this code existed.
+
+**Verdict: contradicted.** All three predictions fail, and the third fails in
+the direction the "against" clause named: funding gets *stronger* once
+drawdown is in the regression, so whatever funding measures, it is not fear.
+
+| | Prediction | Result |
+|---|---|---|
+| 1 | Deeper drawdown, higher premium, survives level control | Alone +0.17 per point (t 2.0); with DVOL level **-0.05 (t -0.5)**. All of it was the vol level |
+| 2 | Steeper put skew, higher premium, also on ATM | DVOL premium +0.58 (t 2.0) alone, +0.27 (t 0.9) with level. ATM premium **+0.27 (t 1.0)**, with level +0.02 (t 0.1). n=64 |
+| 3 | Funding shrinks by half with drawdown in | Funding goes from -0.54 (t -2.5) to **-0.79 (t -3.5)**; -0.84 (t -4.0) within year; -0.91 (t -2.9) non-overlapping |
+
+What the numbers say:
+
+- **Drawdown has no effect of its own on the premium.** Its raw link is the
+  vol level: drawdowns come with high DVOL (correlation +0.43), and the level
+  already predicts the premium (the post-hoc finding above). Conditional on
+  level *and* funding, drawdown turns negative (-0.36, t -4.0). That sign is
+  partly collinearity (drawdown and funding correlate -0.44), so I would not
+  read it as "fear lowers the premium", only as "fear does not raise it".
+- **The pattern across drawdown is U-shaped, not rising.** Terciles: shallow
+  (2.8% off the high) +8.6, middle (13%) +2.1, deep (31%) +11.0. The deep
+  tercile also has the highest DVOL (69 against 55-57), so it is the level
+  again. Near highs, with funding at +10%, the premium is just as large.
+- **Skew carries nothing for the trade you can actually do.** It predicts the
+  DVOL premium only as far as it tracks the level, and does not predict the ATM
+  premium at all. That is the mechanical case the predictions warned about:
+  DVOL prices the wings, so a steeper skew lifts DVOL but not the ATM leg.
+  Power is low (n=64), so this is "not supported" more than "disproved", but
+  the point estimate on ATM with a level control is essentially zero.
+- **Funding survives everything thrown at it.** Level control, within year,
+  non-overlapping, and now a fear control: always negative, |t| 2.5-4. It is
+  the most robust predictor in the study apart from the vol level itself.
+
+What this changes: point 2 of *What this changes about the story* above
+proposed a fear premium "largest after de-leveraging". The de-leveraging half
+stands (low funding, high premium); the fear half does not. The better
+summary is now **"the premium scales with the vol level and is lower when
+perp funding is high"**, with no mechanism yet for the second part.
+
+Untested ideas for why high funding means a lower premium, in rough order of
+how cheap they are to check here:
+
+- *Upside realised vol.* High funding marks rallies, and fast rallies realise
+  a lot of variance. Split realised variance into up and down semivariance and
+  see whether high-funding windows are the ones where upside realised is
+  large.
+- *Call-side bidding.* If leverage demand bids calls (H2's original idea), it
+  would raise the call wing, i.e. *lower* the z=-1 minus z=+1 skew. Regress
+  skew on funding on the 64 monthly days.

@@ -244,7 +244,7 @@ change already broke the trade once within the sample.
 | Write-up | **this file** | — |
 | Dashboard | not started | `dashboard/app.py` is a stub |
 
-**426 tests.** `python -m pytest`
+**427 tests.** `python -m pytest`
 
 ## Running it
 

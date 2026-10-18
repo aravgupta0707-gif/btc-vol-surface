@@ -155,6 +155,41 @@ def trailing_funding(asset: str) -> pd.Series:
     return daily.rolling(HORIZON).mean().rename("funding30")
 
 
+def drawdown(close: pd.Series, window: int = 90) -> pd.Series:
+    """Percent below the trailing `window`-day high, using closes up to each day."""
+    high = close.rolling(window, min_periods=window).max()
+    return (100 * (1 - close / high)).rename("drawdown90")
+
+
+def trailing_drawdown(asset: str, window: int = 90) -> pd.Series:
+    """Daily drawdown from the perp's end-of-day close (the 23:00 candle's close)."""
+    candles = pd.read_parquet(CACHE / f"{asset.lower()}_perp_hourly.parquet")
+    close = candles.set_index(pd.to_datetime(candles["time"]))["close"]
+    close.index = close.index.tz_convert("UTC").tz_localize(None)
+    return drawdown(close.resample("D").last().dropna(), window)
+
+
+def surface_skew(asset: str = "BTC", tenor: int = 30) -> pd.DataFrame:
+    """
+    Per archive day: put-call skew (iv at z=-1 minus z=+1, vol points) and the
+    ATM premium (ATM implied minus realised, vol points), from vrp_surface.py.
+    Days where either wing falls outside the quoted strikes are dropped.
+    """
+    s = pd.read_parquet(CACHE / "vrp_surface.parquet")
+    s = s[(s["asset"] == asset) & (s["tenor"] == tenor) & (s["skipped"] == "")]
+    s = s.assign(date=pd.to_datetime(s["date"]))
+    ok = s["supported"].astype(bool)
+    wing = s[ok & s["z"].isin([-1.0, 1.0])].pivot_table(index="date", columns="z", values="iv")
+    wing = wing.dropna()
+    atm = s[s["z"] == 0].set_index("date")
+    out = pd.DataFrame({
+        "skew": (wing[-1.0] - wing[1.0]) * 100,
+        "atm_premium": (atm["atm_iv"] - atm["realized"]) * 100,
+        "atm_iv": atm["atm_iv"] * 100,
+    }).dropna()
+    return out
+
+
 # ---------------------------------------------------------------- inference
 
 def long_run_var(e: np.ndarray, lags: int = LAGS) -> float:
@@ -337,6 +372,61 @@ def test_h2(panel: pd.DataFrame, funding: pd.Series) -> None:
     print("\n  Mean funding by year (ann. %) -- is it an era proxy?")
     for y, g in frame.groupby(frame.index.year):
         print(f"    {y}  funding {g['funding30'].mean():+7.2f}   premium {g['premium'].mean():+6.2f}")
+
+
+def test_h6(panel: pd.DataFrame, funding: pd.Series, dd: pd.Series,
+            skew: pd.DataFrame) -> None:
+    header("H6  Fear or leverage? Drawdown and put skew against funding")
+    frame = panel.join([funding, dd], how="inner").dropna()
+    year = frame.index.year
+
+    def within(df):
+        return df - df.groupby(year).transform("mean")
+
+    print(f"  (1) Daily sample, {len(frame)} observations "
+          f"({frame.index[0]:%Y-%m} to {frame.index[-1]:%Y-%m}).")
+    print(f"      corr(drawdown, funding) {frame['drawdown90'].corr(frame['funding30']):+.2f}"
+          f"   corr(drawdown, DVOL) {frame['drawdown90'].corr(frame['dvol']):+.2f}\n")
+    print(f"  {'regressors':<34} {'drawdown':>14} {'funding':>14} {'DVOL':>14}")
+    specs = [["drawdown90"], ["drawdown90", "dvol"], ["funding30", "dvol"],
+             ["drawdown90", "funding30", "dvol"]]
+    for cols, w in [(c, False) for c in specs] + [(specs[-1], True)]:
+        y, X = frame["premium"], frame[cols]
+        if w:
+            y, X = within(y), within(X)
+        beta, ts = nw_ols_multi(y, X)
+        cell = {c: f"{b:+.3f} ({t:+.1f})" for c, b, t in zip(cols, beta, ts)}
+        label = " + ".join({"drawdown90": "dd", "funding30": "fund", "dvol": "DVOL"}[c]
+                           for c in cols) + (", within year" if w else "")
+        print(f"  {label:<34} {cell.get('drawdown90', ''):>14} "
+              f"{cell.get('funding30', ''):>14} {cell.get('dvol', ''):>14}")
+    print("  (slope per point of drawdown %, per point of annualised funding %; NW t)")
+
+    sparse = frame.iloc[::HORIZON]
+    beta, ts = nw_ols_multi(sparse["premium"], sparse[["drawdown90", "funding30", "dvol"]], lags=1)
+    print(f"\n  non-overlapping (n={len(sparse)}), dd + fund + DVOL: "
+          f"dd {beta[0]:+.3f} (t {ts[0]:.2f}), fund {beta[1]:+.3f} (t {ts[1]:.2f})")
+
+    print("\n  Premium by drawdown tercile (full-sample cut points; descriptive only)")
+    bins = pd.qcut(frame["drawdown90"], 3, labels=["shallow", "middle", "deep"])
+    for b, g in frame.groupby(bins, observed=True):
+        print(f"    {b:<8} dd {g['drawdown90'].mean():5.1f}%  funding {g['funding30'].mean():+6.1f}"
+              f"  DVOL {g['dvol'].mean():5.1f}  premium {g['premium'].mean():+6.2f}  n={len(g)}")
+
+    m = skew.join(panel[["premium", "dvol"]], how="inner").join(dd, how="left").dropna()
+    print(f"\n  (2) Put-call skew, 30d z=-1 minus z=+1, monthly archive days: n={len(m)} "
+          f"({m.index[0]:%Y-%m} to {m.index[-1]:%Y-%m}), mean skew {m['skew'].mean():+.2f}")
+    print(f"      corr(skew, drawdown) {m['skew'].corr(m['drawdown90']):+.2f}"
+          f"   corr(skew, ATM iv) {m['skew'].corr(m['atm_iv']):+.2f}\n")
+    print(f"  {'premium':<12} {'regressors':<16} {'skew slope':>16} {'level':>16}")
+    for target, level in [("premium", "dvol"), ("atm_premium", "atm_iv")]:
+        for cols in (["skew"], ["skew", level]):
+            beta, ts = nw_ols_multi(m[target], m[cols], lags=1)
+            lv = f"{beta[1]:+.3f} ({ts[1]:+.1f})" if len(cols) > 1 else ""
+            sk = f"{beta[0]:+.3f} ({ts[0]:+.1f})"
+            name = "DVOL" if target == "premium" else "ATM"
+            print(f"  {name:<12} {' + '.join(cols):<16} {sk:>16} {lv:>16}")
+    print("  (lag-1 Newey-West: monthly 30-day windows barely overlap)")
 
 
 def test_h3(panel: pd.DataFrame) -> None:
@@ -565,6 +655,7 @@ def main() -> int:
     test_h5(btc, eth)
     test_h5_openinterest(btc, eth)
     test_posthoc(btc, btc_dvol)
+    test_h6(btc, trailing_funding("BTC"), trailing_drawdown("BTC"), surface_skew("BTC"))
 
     btc.to_parquet(CACHE / "vrp_hypotheses_btc.parquet")
     return 0

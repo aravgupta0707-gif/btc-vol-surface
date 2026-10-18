@@ -126,3 +126,15 @@ def test_sup_shift_pvalue_is_small_with_a_break():
     rng = np.random.default_rng(8)
     p = np.concatenate([rng.standard_normal(400) + 2.0, rng.standard_normal(400)])
     assert vh.sup_shift_pvalue(p, block=30, draws=60) < 0.05
+
+
+def test_drawdown_is_zero_at_new_highs_and_uses_only_the_past():
+    close = pd.Series([100.0, 110, 99, 120, 60], index=pd.date_range("2024-01-01", periods=5))
+    dd = vh.drawdown(close, window=3)
+    assert np.isnan(dd.iloc[1])                    # not enough history yet
+    assert abs(dd.iloc[2] - 10.0) < 1e-9           # 99 vs high 110
+    assert dd.iloc[3] == 0.0                       # a new high
+    assert abs(dd.iloc[4] - 50.0) < 1e-9           # 60 vs 120
+    # changing a later close must not change an earlier drawdown
+    later = close.copy(); later.iloc[4] = 1.0
+    assert vh.drawdown(later, window=3).iloc[:4].equals(dd.iloc[:4])
