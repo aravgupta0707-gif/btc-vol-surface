@@ -226,3 +226,53 @@ and carry less weight.
   BTC share is lowest.
 - **2026.** The premium is about zero in the last eight months. Whether that
   is the start of something or noise is not knowable yet.
+
+---
+
+# Follow-up: fear or leverage? (H6), written before testing
+
+H2 found funding predicts the premium with the *wrong* sign: the premium is
+higher when leverage is low. The revised story above reads that as a fear
+premium. This section tests that directly, with predictions fixed before the
+code was run. Results are appended below them.
+
+**H6. The premium is a fear premium, and funding's negative sign was standing
+in for fear.** After drawdowns, demand for downside protection bids implied
+above what is then realised, and funding is low or negative in the same
+windows. So a direct fear measure should carry the relationship that funding
+only proxied.
+
+Two fear proxies, both known at the observation date:
+
+- **90-day drawdown** of BTC from its trailing 90-day high (daily, perp
+  closes). Daily sample, same as H2.
+- **Put-call skew**: 30-day implied vol at standardised moneyness z = -1
+  minus z = +1 (vol points), from the fitted surfaces in `vrp_surface.parquet`.
+  Only the monthly archive days have it, and only where both wings sit inside
+  the quoted strike range.
+
+- *Predicts:*
+  1. Deeper drawdown predicts a **higher** premium: positive slope, NW t > 2,
+     also within year and with DVOL level controlled.
+  2. Steeper put skew predicts a higher premium on the monthly sample, same
+     sign. Because DVOL itself prices the wings, skew is mechanically tied to
+     the DVOL premium, so the prediction must also hold for the **ATM**
+     premium (30d ATM implied minus realised) on the same days.
+  3. Horse race: with drawdown and funding in one regression (plus DVOL
+     level), drawdown keeps its sign and significance and funding's slope
+     shrinks toward zero, i.e. loses at least half of its size.
+- *Against:* fear proxies have no relation or the wrong sign; or funding stays
+  as large and significant with drawdown in the regression (then funding is
+  measuring something other than fear); or skew only predicts the DVOL premium
+  and not the ATM premium (then the link is mechanical, not demand).
+
+Known issues, stated up front:
+
+- Drawdown and funding are correlated by construction (crashes deleverage),
+  so the horse race is the test, not either regression alone.
+- The skew sample is about 65 monthly points. With monthly 30-day windows the
+  observations barely overlap, so a lag-1 Newey-West is used, and power is low:
+  a true effect may well show |t| under 2. That counts as "not supported",
+  not as evidence against.
+- This is one more batch of tests on top of about 60. A lone |t| near 2 is
+  still not confirmation.
