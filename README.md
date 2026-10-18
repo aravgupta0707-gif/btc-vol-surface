@@ -12,7 +12,8 @@ signal.
 
 `BUILD_GUIDE.md` is the original brief, `PLAN.md` the working plan,
 `HANDOFF.md` the full state of play and findings, `VIOLATIONS.md` the
-arbitrage log.
+arbitrage log, `HYPOTHESES.md` the pre-registered study of why the premium
+shrank.
 
 ---
 
@@ -82,8 +83,14 @@ rebalancing rules against measured spreads (`hedge_frequency.py`):
 | 2021–22 only | +42.9 bps | 4.8 | ≈ flat |
 | 2023–26 only | −7.0 bps | −1.8 | negative |
 
-So pooled over six years there is no premium even *before* costs. It was
-capturable in 2021–22 and has not been since.
+So pooled over six years the **one-day** trade has no premium even *before*
+costs. It was capturable in 2021–22 and has not been since.
+
+That is a statement about one-day positions, not about the premium. At 30 days
+it is still there in 2023–26 — +4.4 vol points on DVOL against hourly realised
+(95% block bootstrap [+2.1, +6.5]), and +83 bps gross on the ATM straddle
+(t 2.4), which is about the top of the 31–86 bps cost range. What went away is
+the margin over cost, not the premium (`HYPOTHESES.md`).
 
 **Held to expiry, paying the spread once, the picture is better but still
 marginal.** BTC 30-day ATM straddle, spread measured per strike from the
@@ -216,9 +223,9 @@ and silently froze a live hedge for 17 of 24 hours, while the diagnostic meant
 to catch it reported a 3-hour gap. Nothing errored. The lesson generalises past
 this bug: the dangerous failures are the ones that produce plausible numbers,
 so the guards have to measure the thing they claim to measure, not a proxy that
-correlates with it on good days. Beyond that — the premium was capturable in
-2021–22 and has not been since, so a regime change already broke it once within
-the sample.
+correlates with it on good days. Beyond that — the premium cleared costs
+comfortably in 2021–22 and has shrunk to roughly their size since, so a regime
+change already broke the trade once within the sample.
 
 ---
 
@@ -237,7 +244,7 @@ the sample.
 | Write-up | **this file** | — |
 | Dashboard | not started | `dashboard/app.py` is a stub |
 
-**416 tests.** `python -m pytest`
+**426 tests.** `python -m pytest`
 
 ## Running it
 
@@ -255,6 +262,7 @@ python scripts/hedge_frequency.py run          # rebalancing rule vs cost [~5 mi
 python scripts/hedge_frequency.py walkforward  # the same, chosen blind
 python scripts/hold_to_expiry.py     # live book, settled at expiry
 python scripts/rnd_monitor.py        # risk-neutral density
+python scripts/vrp_hypotheses.py     # why the premium shrank [~25 s]
 python scripts/make_figures.py       # regenerate the snapshots above
 ```
 
