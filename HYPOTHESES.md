@@ -106,6 +106,8 @@ written first and are unedited.
 implied 60.2, realised 53.0, premium **+7.25 vol points, NW t 4.8**, positive
 73% of days. By year: +14.5, +12.1, +6.5, +5.8, +3.4, **+0.3** (2021 to 2026).
 
+![BTC implied vs realised vol, and the premium](figures/premium_time.png)
+
 **H0 / H1.**
 - The premium is not zero. 2023-26 alone is +4.36, 95% block-bootstrap
   interval [+2.1, +6.5].
@@ -127,6 +129,8 @@ level controlled (t -2.50). On a non-overlapping sample it weakens to t -1.78.
 So the premium is *higher when leverage is low or negative*, i.e. after
 de-leveraging and fear, not in leveraged bull phases. The leverage-call-demand
 story is wrong as stated.
+
+![Funding against the premium, raw and with the vol level partialled out](figures/premium_funding.png)
 
 **H3 (contradicted).** Implied variance exceeds the continuous (bipower)
 component by 10.2 vol points against 6.9 for total realised, but that part is
@@ -194,6 +198,8 @@ and carry less weight.
    over-reacts to its own level, so a high-vol regime carries more premium**.
    As a share of implied the premium went 15.0%, 15.1%, 11.8%, 9.1%, 7.5%,
    -1.1% by year; the proportional trend is borderline (t -1.9).
+
+   ![The premium against the DVOL level, by era](figures/premium_level.png)
 
 ## What this changes about the story
 
@@ -304,6 +310,8 @@ What the numbers say:
   (2.8% off the high) +8.6, middle (13%) +2.1, deep (31%) +11.0. The deep
   tercile also has the highest DVOL (69 against 55-57), so it is the level
   again. Near highs, with funding at +10%, the premium is just as large.
+
+  ![Premium by 90-day drawdown tercile](figures/premium_drawdown.png)
 - **Skew carries nothing for the trade you can actually do.** It predicts the
   DVOL premium only as far as it tracks the level, and does not predict the ATM
   premium at all. That is the mechanical case the predictions warned about:
