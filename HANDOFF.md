@@ -4,6 +4,8 @@ Everything needed to pick this project up cold. Written 2026-09-09, updated
 2026-09-23 after the archive completed, the six-year studies ran (§10), the
 hedging-rule work landed (§12, §12.1, §12.2), and putting that rule on the
 live book turned up a marking bug that had been freezing its hedge (§10.5).
+Updated 2026-10-25 for the study of why the premium shrank (§10.6,
+`HYPOTHESES.md`).
 
 **The repository has a remote now**: `origin` is
 `github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
@@ -11,15 +13,16 @@ clone gets the code and nothing else — every data directory is gitignored, so
 see §2 for what has to be moved separately.
 
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
-per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. This file is the
+per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. `HYPOTHESES.md` is the pre-registered
+study of why the premium shrank, with its figures. This file is the
 state of play, what was learned, and what to do next.
 
 ---
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **416 tests, 36
-commits, 11,041 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **427 tests, 46
+commits, 12,202 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -59,6 +62,8 @@ python scripts/hold_to_expiry.py --clock       # the same, on the old 4h clock
 python scripts/hedge_frequency.py run          # rebalancing rule vs cost [~5 min]
 python scripts/hedge_frequency.py walkforward  # the same, chosen blind (§12.2)
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
+python scripts/vrp_hypotheses.py     # why the premium shrank (§10.6)  [~25 s]
+python scripts/make_figures.py premium  # its four figures, into figures/
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
 
 # operations
@@ -494,7 +499,8 @@ better artifact than a 1-day table would have been.
 1. **Phase 7 — the write-up.** BUILD_GUIDE §9 is specific about what the
    README owes: the pipeline diagram, the arbitrage violations found and
    fixed, final metrics with honest caveats about crypto costs, and a couple
-   of surface snapshots. Today's README is a status list. The four interview
+   of surface snapshots. **README done 2026-10-05** (pipeline, results,
+   snapshots, what broke; premium figures added 2026-10-25). The four interview
    talking points §9 lists should have concrete answers ready; three of them
    are unusually well served by §10 and §12, and the fourth — what would
    break this in a real market — now has an empirical answer rather than a
@@ -521,7 +527,14 @@ better artifact than a 1-day table would have been.
    strikes rather than only when the level itself does. Also fix the ETH
    report's "below 0" level and its "BTC" heading.
 
-5. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
+5. **Why high funding means a lower premium** (§10.6, H6). Two cheap tests on
+   data already on disk, both listed at the end of `HYPOTHESES.md`: split
+   realised into up and down semivariance and see whether high-funding
+   windows realise a lot of upside; and regress the z=-1 minus z=+1 skew on
+   funding over the 64 monthly days to see whether leverage bids the call
+   wing. Pre-register them the same way.
+
+6. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
    (spin-off D) both need weeks more Track A (~15 days banked, ~17 snapshots a
    day). PCA is the precursor to anything model-shaped.
 
@@ -534,7 +547,7 @@ the hourly path (58k hours), and the question living there is hedging policy,
 which §12.1 and §12.2 now answer with a closed form. So a fitted policy has to
 beat Whalley-Wilmott chosen out of sample, not a clock — and §12.2 is the
 harness to judge it with. Revisit when Track A has months rather than days and
-step 5 has established the factor structure.
+step 6 has established the factor structure.
 
 ---
 
@@ -870,6 +883,30 @@ sample on the archive. Different data, same verdict. That diagnostic keeps
 earning its place as the thing to check first. The ETH 7-day +415.6 is one
 unhedged position over a kind 16 days, n = 1, and is not evidence of
 anything.
+
+### 10.6 Why the premium shrank — `vrp_hypotheses.py`
+
+Full write-up, predictions and figures in `HYPOTHESES.md`. Each hypothesis's
+predictions were written before its test ran; H6's were committed separately
+(`d5fc7b9`) ahead of the code. 30-day DVOL premium against hourly realised,
+1,977 days, Newey-West t with a 30-day lag throughout.
+
+| | Hypothesis | Verdict |
+|---|---|---|
+| H0 | No stable premium | Premium ≠ 0 (t 4.8; 2023-26 alone [+2.1, +6.5]); a constant mean is not rejected |
+| H1 | Competition caused a break | Not supported: break p 0.11-0.29, decline is a drift that the vol level absorbs |
+| H2 | Leverage demand raises it | Contradicted: funding predicts it with the *opposite* sign |
+| H3 | Jump compensation | Contradicted: high-jump windows earn *more* |
+| H4 | Premium ≈ cost of harvesting it | Supported at 30 days in 2023-26 (+83 bps vs 31-86 bps cost) |
+| H5 | BTC carries more than ETH | Supported as an association; reverses in 2026 |
+| H6 | Fear, not leverage | Contradicted: drawdown and skew add nothing past the level; funding *strengthens* (-0.54 → -0.79) |
+
+The surviving summary: **the premium scales with the vol level and is lower
+when perp funding is high**, with no mechanism yet for the second part. Two
+other findings worth knowing before reusing any number here: the premium
+moves 3-6 vol points with the realised-variance sampling interval, and about
+two thirds of the DVOL premium is smile convexity an ATM straddle does not
+earn.
 
 ---
 

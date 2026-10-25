@@ -125,6 +125,29 @@ expanding median — no lookahead — the loss widens to **−6.14, t −4.56**.
 holds in both eras separately and in 6 of 7 years. Larger and more significant
 than anything in the straddle results, and the least examined thing here.
 
+**Why the premium shrank.** `HYPOTHESES.md` writes down six mechanisms and
+what each predicts before running anything (`vrp_hypotheses.py`, about 25 s),
+then reports against them. On the 30-day DVOL premium, 1,977 days:
+
+![BTC implied vs realised vol, and the premium](figures/premium_time.png)
+
+- **It is mostly the vol level.** Implied fell from 81.5 to 49.9 between eras,
+  and the premium scales with it (+0.34 vol points per DVOL point, t 4.0),
+  because implied over-reacts to its own level. The decline is a drift, not a
+  break: the estimated break date has bootstrap p 0.11-0.29.
+- **Leverage works the opposite way to the obvious story.** High perp funding
+  goes with a *lower* premium (-0.54 per funding point with level controlled,
+  t -2.5), robust within year and on non-overlapping samples.
+- **Fear does not explain that.** Drawdown and put skew add nothing once the
+  level is controlled, and with drawdown in the regression funding's slope
+  *grows* (-0.79, t -3.5). Competition (a structural break) and jump
+  compensation are not supported either.
+- **What is left is about the cost of harvesting it** in the ATM straddle in
+  2023-26, which is what a zero-profit market would look like — or one with
+  not much there. This data cannot tell those apart.
+
+![Funding against the premium, raw and with the vol level partialled out](figures/premium_funding.png)
+
 ---
 
 ## What broke, and how it was found
@@ -241,6 +264,7 @@ change already broke the trade once within the sample.
 | Greeks | done | delta matches Deribit to 0.0007 median |
 | Strategy + backtest | done | 314 positions, six years |
 | Costs + hedging rule | done | 128-cell sweep, walked forward |
+| Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
 | Write-up | **this file** | — |
 | Dashboard | not started | `dashboard/app.py` is a stub |
 
@@ -263,7 +287,8 @@ python scripts/hedge_frequency.py walkforward  # the same, chosen blind
 python scripts/hold_to_expiry.py     # live book, settled at expiry
 python scripts/rnd_monitor.py        # risk-neutral density
 python scripts/vrp_hypotheses.py     # why the premium shrank [~25 s]
-python scripts/make_figures.py       # regenerate the snapshots above
+python scripts/make_figures.py       # regenerate every figure above
+python scripts/make_figures.py premium   # premium figures only, no live chain needed
 ```
 
 A clone gets the code and nothing else — every data directory is gitignored.
