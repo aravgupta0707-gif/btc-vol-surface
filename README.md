@@ -2,7 +2,7 @@
 
 An arbitrage-free implied volatility surface built from live Deribit options
 data, and a delta-hedged short-straddle strategy backtested on top of it over
-six years of archive and three weeks of live hourly chains.
+six years of archive and two months of live hourly chains.
 
 The headline result is negative, and that is the result: **the volatility risk
 premium on BTC clears the option bid-ask and then dies on the hedge.** What
@@ -45,7 +45,7 @@ scripts/     checkpoints, six-year studies, hedging-rule sweep, RND monitor
 ```
 
 Two data tracks feed this. **Track A** is the live hourly collector (contiguous,
-started empty — now ~3 weeks). **Track B** is the Tardis.dev free archive: one
+started empty — now ~2 months). **Track B** is the Tardis.dev free archive: one
 full day of hourly chains per month, 2020–2026, 158 days. Track B is what makes
 six-year statistics possible at all; Track A is what makes a realistic
 hold-to-expiry cost measurement possible.

@@ -10,11 +10,11 @@ bid-ask twice for one day of decay -- and found costs of 34-46 bps a day
 against a gross edge of 1-6. A desk selling vol does not do that: it sells
 once and lets the option expire, paying the spread once per option life.
 The archive cannot test that (it has one day per month), but Track A has a
-contiguous fortnight of hourly chains, which holds every daily expiry and a
+run of hourly chains (two months by 2026-11), which holds every daily expiry and a
 couple of weeklies.
 
 For each expiry in the collection, sell the ATM straddle at the bid 1 day
-(and, where possible, 7 days) before, hedge on a Whalley-Wilmott no-trade
+(and, where possible, 7 and 30 days) before, hedge on a Whalley-Wilmott no-trade
 band at whatever snapshots exist, and settle at intrinsic against the
 Deribit index at 08:00 UTC. No buy-back, no exit spread.
 
@@ -50,7 +50,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-HORIZONS = {"1d": pd.Timedelta(days=1), "7d": pd.Timedelta(days=7)}
+# 30d became possible once Track A held more than a month of contiguous chains.
+HORIZONS = {"1d": pd.Timedelta(days=1), "7d": pd.Timedelta(days=7),
+            "30d": pd.Timedelta(days=30)}
 # The band reads the slippage it is economising on, so these two travel
 # together: change the cost and the rule rewidens on its own.
 SLIPPAGE_BPS = 5.0
@@ -235,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     skipped = frame[frame["skipped"] != ""]
     if len(skipped):
         print("\nskipped:", skipped.groupby(["asset", "horizon"])["skipped"].value_counts().to_dict())
-    print("\nOne fortnight, one regime: this shows the cost structure of holding to expiry, "
+    print("\nWeeks of one regime, not years: this shows the cost structure of holding to expiry, "
           "not an edge.")
     return 0
 

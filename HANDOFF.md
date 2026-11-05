@@ -534,9 +534,10 @@ better artifact than a 1-day table would have been.
    funding over the 64 monthly days to see whether leverage bids the call
    wing. Pre-register them the same way.
 
-6. **Waiting on data**: surface PCA and the inverse-vs-linear stress test
-   (spin-off D) both need weeks more Track A (~15 days banked, ~17 snapshots a
-   day). PCA is the precursor to anything model-shaped.
+6. **Now runnable**: surface PCA and the inverse-vs-linear stress test
+   (spin-off D) were waiting on Track A, which has ~58 days banked as of
+   2026-11-04 (~13 snapshots a day, USDC chains included). PCA is the
+   precursor to anything model-shaped.
 
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive
@@ -883,6 +884,42 @@ sample on the archive. Different data, same verdict. That diagnostic keeps
 earning its place as the thing to check first. The ETH 7-day +415.6 is one
 unhedged position over a kind 16 days, n = 1, and is not evidence of
 anything.
+
+#### Rerun on 58 days, 2026-11-05
+
+Track A now runs 2026-09-07 to 11-04, so the study gained a 30-day horizon
+(the 10-30 monthly, sold 09-30). Same rule, same costs; band against clock on
+matched inceptions:
+
+| block | n | rebalances clock → band | gross clock → band | net clock → band |
+|---|---|---|---|---|
+| BTC 1d | 41 | 2.3 → 0.7 | +1.6 → +3.5 | -12.8 → **-9.4** |
+| ETH 1d | 40 | 2.5 → 0.1 | +4.2 → +5.2 | -12.6 → **-6.4** |
+| BTC 7d | 5 | 22.6 → 3.6 | -69.9 → +46.0 | -97.0 → +24.9 |
+| ETH 7d | 5 | 21.6 → 0.6 | -75.2 → +16.1 | -99.7 → +2.5 |
+| BTC 30d | 1 | 95 → 12 | -1.3 → +3.6 | -45.6 → -25.9 |
+| ETH 30d | 1 | 86 → 2 | -16.7 → -58.8 | -51.3 → -78.6 |
+
+- **The cost finding holds and is now on 81 dailies, not 21.** Spread paid
+  once is 8-10 bps against a 125-164 bps premium, 6-7%. Net is slightly
+  negative and indistinguishable from zero (t -0.8 BTC, -0.3 ETH) with a
+  standard deviation of 77-131 bps a position.
+- **The BTC/ETH asymmetry above does not survive more data.** At one day the
+  band and the clock now differ by +1.9 gross on BTC and +1.0 on ETH, both
+  t < 0.3. With 21 positions the ETH gap looked like §12.2's pathology; with
+  81 it is noise. The paragraph above is left as written, as what 16 days
+  showed.
+- **7d and 30d are not hedged, so they say nothing about the rule.** Not one
+  of the 12 longer positions ran without an 8h+ hedging gap: 7d gaps are
+  11-25h, the 30d position's worst is 54h. That is the laptop sleeping, not
+  the market. The 7d band-minus-clock gap (+116 gross BTC, t 2.1; +91 ETH,
+  t 1.3; n = 5) is in the direction §12.1 predicts but cannot be separated
+  from gaps landing on different moves under each rule.
+- **The live 30-day trade is still untested.** One position per asset, both
+  with 54h gaps. Testing it needs collection that does not sleep for a month
+  (a server, or `health.py` keeping the laptop awake), then a few months of
+  monthlies. Until then the archive's 44 inceptions (§12) remain the only
+  30-day evidence.
 
 ### 10.6 Why the premium shrank — `vrp_hypotheses.py`
 
