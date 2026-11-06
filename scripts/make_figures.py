@@ -3,6 +3,7 @@ Render the surface snapshots and the premium figures the write-ups need.
 
     python scripts/make_figures.py            surface snapshots + premium figures
     python scripts/make_figures.py premium    premium figures only (no live chain needed)
+    python scripts/make_figures.py pca        surface PCA loadings only (needs surface_pca.py run)
 
 BUILD_GUIDE.md section 9 asks the README to carry "a couple of surface
 snapshots". These are those, generated from the most recent Track A chain so
@@ -325,13 +326,61 @@ def premium_figures() -> list[Path]:
     return paths
 
 
+def pca_figure(path) -> Path | None:
+    """PC1-3 loadings of the BTC surface's 12h changes, one line per tenor (SURFACE_PCA.md)."""
+    import importlib.util
+
+    import matplotlib.pyplot as plt
+
+    spec = importlib.util.spec_from_file_location(
+        "surface_pca", ROOT / "scripts" / "surface_pca.py")
+    sp = importlib.util.module_from_spec(spec)
+    sys.modules["surface_pca"] = sp
+    spec.loader.exec_module(sp)
+    if not sp.CACHE.exists():
+        return None
+    wide, spot, _ = sp.to_wide(pd_read(sp.CACHE), "BTC")
+    dv, _, _ = sp.changes_over(wide, spot, sp.pd.Timedelta(hours=12))
+    share, vec = sp.pca(dv)
+    cells = list(wide.columns)
+    names = ("PC1: level, largest at the short end", "PC2: skew, put wing against call wing",
+             "PC3: term structure, 7d against the rest")
+    shades = plt.get_cmap("Blues")(np.linspace(0.4, 0.95, len(sp.TENORS)))
+
+    fig, axes = _figure(1, 3, figsize=(12, 4), sharey=True)
+    for k, ax in enumerate(axes):
+        for tenor, color in zip(sp.TENORS, shades):
+            pts = [(z, vec[cells.index((tenor, z)), k]) for z in sp.ZS if (tenor, z) in cells]
+            ax.plot(*zip(*pts), color=color, lw=2, marker="o", ms=4, label=f"{tenor}d")
+        ax.axhline(0, color=INK_2, lw=0.8)
+        ax.set_title(f"{names[k]}\n{share[k]:.0%} of variance", fontsize=9, color=INK, loc="left")
+        ax.set_xlabel("standardised moneyness z")
+    axes[0].set_ylabel("loading")
+    _legend(axes[0], loc="upper right", title="tenor", title_fontsize=8)
+    fig.suptitle(f"How the BTC surface moves: PCA of {len(dv)} 12-hour changes, "
+                 f"{wide.index[0]:%Y-%m-%d} to {wide.index[-1]:%Y-%m-%d}",
+                 fontsize=10, color=INK, x=0.01, ha="left")
+    _save(fig, path)
+    return path
+
+
+def pd_read(path):
+    import pandas as pd
+
+    return pd.read_parquet(path)
+
+
 def main() -> int:
     import matplotlib
     matplotlib.use("Agg")
 
     arg = sys.argv[1].upper() if len(sys.argv) > 1 else "BTC"
     FIG_DIR.mkdir(exist_ok=True)
-    premium = premium_figures()
+    pca = pca_figure(FIG_DIR / "surface_pca.png")
+    if arg == "PCA":
+        print(f"wrote {pca.relative_to(ROOT)}" if pca else "no surface_grid cache; run surface_pca.py")
+        return 0
+    premium = premium_figures() + ([pca] if pca else [])
     if arg == "PREMIUM":
         for p in premium:
             print(f"wrote {p.relative_to(ROOT)}  ({p.stat().st_size / 1024:.0f} KB)")

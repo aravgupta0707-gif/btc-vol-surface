@@ -14,14 +14,15 @@ see §2 for what has to be moved separately.
 
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
 per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. `HYPOTHESES.md` is the pre-registered
-study of why the premium shrank, with its figures. This file is the
+study of why the premium shrank, with its figures; `SURFACE_PCA.md` the same
+for how the live surface moves. This file is the
 state of play, what was learned, and what to do next.
 
 ---
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **427 tests, 46
+Every build-guide stage but the dashboard is complete. **430 tests, 50
 commits, 12,202 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
@@ -64,6 +65,7 @@ python scripts/hedge_frequency.py walkforward  # the same, chosen blind (§12.2)
 python scripts/vrp_study.py          # DVOL-based VRP, 2021-2026
 python scripts/vrp_hypotheses.py     # why the premium shrank (§10.6)  [~25 s]
 python scripts/make_figures.py premium  # its four figures, into figures/
+python scripts/surface_pca.py        # surface factors on Track A  [~5 min first run]
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
 
 # operations
@@ -534,10 +536,12 @@ better artifact than a 1-day table would have been.
    funding over the 64 monthly days to see whether leverage bids the call
    wing. Pre-register them the same way.
 
-6. **Now runnable**: surface PCA and the inverse-vs-linear stress test
-   (spin-off D) were waiting on Track A, which has ~58 days banked as of
-   2026-11-04 (~13 snapshots a day, USDC chains included). PCA is the
-   precursor to anything model-shaped.
+6. **Surface PCA done 2026-11-06** (`SURFACE_PCA.md`): three factors explain
+   96-97% of 12h changes on both assets — level (5-7x larger at 7d than 90d),
+   then skew, then a short-end term factor — identical across BTC and ETH.
+   Rerun as Track A grows; half the possible pairs were lost to laptop
+   sleep. **Still runnable**: the inverse-vs-linear stress test (spin-off D)
+   on the USDC chains Track A has been banking.
 
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive

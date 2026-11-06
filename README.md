@@ -13,7 +13,7 @@ signal.
 `BUILD_GUIDE.md` is the original brief, `PLAN.md` the working plan,
 `HANDOFF.md` the full state of play and findings, `VIOLATIONS.md` the
 arbitrage log, `HYPOTHESES.md` the pre-registered study of why the premium
-shrank.
+shrank, `SURFACE_PCA.md` the factor structure of the live surface.
 
 ---
 
@@ -265,10 +265,11 @@ change already broke the trade once within the sample.
 | Strategy + backtest | done | 314 positions, six years |
 | Costs + hedging rule | done | 128-cell sweep, walked forward |
 | Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
+| Surface factors | done | `surface_pca.py` — 3 factors, 96-97% of 12h changes |
 | Write-up | **this file** | — |
 | Dashboard | not started | `dashboard/app.py` is a stub |
 
-**427 tests.** `python -m pytest`
+**430 tests.** `python -m pytest`
 
 ## Running it
 
