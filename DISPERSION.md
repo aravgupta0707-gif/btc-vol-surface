@@ -89,3 +89,72 @@ more than the ETH leg alone, i.e. the short BTC leg contributes positively
   correlation is reported.
 - This is a test on cells that were themselves already looked at in §12, for
   the BTC leg. The ETH-long leg and the combination have not been.
+
+## Results
+
+Run: `python scripts/dispersion.py` (seconds; reads the sweep's cells). The
+predictions above were committed (`751e699`) before the script existed.
+
+**Verdict: not a trade with straddles.** The relative-value effect is real
+in vol points and reproduces in gross P&L at the predicted size, but two
+spreads and two hedging bills cost more than it earns, the entry rule adds
+nothing once P&L runs along a hedged path, and the book's profit comes from
+the BTC short, not from ETH being cheap.
+
+Primary specification (30d ATM, 4-hour clock, 5 bps slippage), 74 paired
+months 2020-04 to 2026-08, bps of one leg's spot notional:
+
+| | Prediction | Result |
+|---|---|---|
+| D1 | gross positive, t > 2, +40 to +130 | **+92.5, t 1.90.** Size as predicted, t just short |
+| D2 | net positive unconditionally (t < 2), **t > 2 on the entry rule** | **Fails.** Net -29.5 (t -0.62) every month; **-28.3 (t -0.66)** on the rule (n=31); rule-off months -58.8 |
+| D3 | same sign in both eras | Net negative in both on the rule (-27, -29); moot |
+| D4 | book beats the ETH leg alone (BTC leg adds) | **The other way round from the premise.** Rule-on: long ETH alone -41.5, short BTC alone +13.2. Every month: long ETH **-92.8**, short BTC **+63.3** |
+
+Costs, both legs: **122 bps a month** — spreads 36 (BTC 15.6, ETH 20.4) and
+hedge slippage 87 at a 4-hour clock. Even at zero slippage, spreads alone
+take the book from +92 gross to +57 net (t 1.19). Vega ratio ETH/BTC 0.998
+(0.991-1.000): equal notional is vega-neutral, as assumed. Realised BTC/ETH
+return correlation over each position: 0.85.
+
+**Robustness (not the test).** Across 64 rule x slippage cells at 30 days,
+rule-on net is positive in 52% and has t > 2 in **none**. The best cells
+(e.g. `ww 0.0001` at 10 bps, +48) are single noisy cells in a grid of 64.
+The 7-day book has no gross to speak of (-2 to +49 bps).
+
+### Why §10.3 looked so much stronger
+
+§10.3 measured `(ETH implied - realised) - (BTC implied - realised)` in vol
+points. On these same 74 months that measure is **-4.01 vol pts (t -3.11)**,
+and **-5.96 (t -4.73)** on the entry rule's 31 months — the rule flags the
+same months as §10.3's (99% agreement). So the vol-point effect is solid. It
+maps to book gross at **24 bps per vol point** (regression slope; predicted
+23), correlation 0.65. Three things then go wrong between vol points and money:
+
+1. **A straddle is a poor instrument for a variance spread.** Its hedged P&L
+   is gamma along one path: once spot drifts from the strike, realised
+   variance stops paying. On the rule's months the vol points imply +145 bps
+   and the straddles delivered +88. The entry rule's extra 2 vol points
+   disappear into that noise (gross +88 on the rule vs +92 every month).
+2. **The legs do not hedge each other well.** Hedged P&L correlates only
+   about 0.65 across the two legs (from the variances: BTC sd 299, ETH 546,
+   book 418), far below the 0.85 return correlation. Adding the long ETH leg
+   *raises* the book's dispersion above the BTC short's alone. A minimum-
+   variance hedge would hold about a third of the ETH notional, not one-for-one.
+3. **Costs double.** Two spreads and two hedge bills, against one premium.
+
+### What it means
+
+The finding in §10.3 is better read as **"BTC 30-day vol carries a premium
+and ETH's carries much less"** than as "ETH vol is cheap". In seller gross,
+BTC ATM earns +121 bps a month (t 3.5) and ETH +28 (t 0.4). Being long ETH vol
+on its own loses after costs (-93 net); as a hedge for the BTC short it costs
+more than it removes in risk.
+
+The instrument that would capture the vol-point effect is a **variance swap
+spread**, not a straddle spread: it pays realised variance regardless of
+where spot goes. Deribit lists no variance swaps, but a 30-day variance swap
+is replicable from the strip of OTM options the surface already prices, and
+the archive already holds those strikes and their spreads. That is the next
+test, and the obvious risk is the same one in sharper form: replication needs
+the wings, and wing spreads on Deribit are wide.
