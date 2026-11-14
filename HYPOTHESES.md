@@ -338,3 +338,70 @@ how cheap they are to check here:
 - *Call-side bidding.* If leverage demand bids calls (H2's original idea), it
   would raise the call wing, i.e. *lower* the z=-1 minus z=+1 skew. Regress
   skew on funding on the 64 monthly days.
+
+---
+
+## H7. Why does high funding go with a lower premium? Written before testing
+
+H6 left one robust, unexplained result: with the vol level controlled, higher
+30-day perp funding predicts a *lower* 30-day DVOL premium (-0.54 per funding
+point, t -2.5, and stronger with drawdown in). This section tests the two
+cheap explanations listed above, plus one that the algebra forces.
+
+A point of arithmetic first, because it shapes the tests. The premium is
+`DVOL - realised`. In a regression of the premium on funding *and DVOL*, the
+funding slope is exactly minus the funding slope in the same regression of
+realised. So the H6 result says nothing about implied: it says **funding
+predicts higher forward realised vol than DVOL's level alone does**. The
+question is what kind of realised.
+
+Data: the same daily panel (1,977 days), hourly perp closes split by the sign
+of each hourly return, and the 64 monthly archive days of fitted 30-day skew.
+
+**H7a. Upside realised.** High funding marks rallies, and fast rallies realise
+variance on the upside. Split forward realised variance into up and down
+semivariance (`RS+ = sum r^2 for r > 0`, `RS-` likewise), each expressed as an
+annualised vol, `sqrt(2 * RS± * 8760 / hours) * 100`, so each equals realised
+vol when returns are symmetric.
+
+- *Predicts:*
+  1. With DVOL controlled, funding's slope on forward **upside** vol is
+     positive with NW t > 2, and larger than its slope on downside vol.
+  2. The upside share of realised variance, `RS+ / RV`, rises with funding
+     (positive slope, t > 2).
+- *Against:* funding predicts upside and downside vol about equally (then it
+  is a general vol forecast that implied under-uses, see H7c), or predicts
+  downside more.
+
+**H7b. Call-side bidding.** If leveraged demand bids calls, the call wing is
+richer when funding is high, so the z=-1 minus z=+1 skew is *lower*.
+
+- *Predicts:* negative slope of 30-day skew on 30-day funding, with ATM
+  implied controlled, on the monthly archive days.
+- *Against:* zero or positive slope.
+- Power is low (n about 64, lag-1 NW). |t| under 2 with the right sign is
+  "not supported", not "disproved".
+
+**H7c. Funding is information implied does not use.** Trailing realised vol
+is the obvious public forecast of forward realised. If funding only proxies
+for recent realised (high funding follows volatile rallies), its effect should
+vanish once trailing realised is controlled.
+
+- *Predicts (the "implied under-uses funding" reading):* with DVOL **and**
+  trailing 30-day realised in the regression, funding's slope on the premium
+  keeps at least half its size and NW |t| > 2.
+- *Against:* the slope falls by more than half or loses significance; then
+  funding was standing in for trailing realised, and the finding is that
+  implied under-reacts to recent realised, not to leverage.
+
+Known issues, stated up front:
+
+- Semivariance from hourly returns is noisy and the upside share is a ratio
+  of noisy things; 30-day overlap makes daily observations far from
+  independent (lag-30 NW throughout, as in H2-H6).
+- Funding and returns are mechanically linked: funding is high *because*
+  price has risen. H7a can show that high-funding windows realise upside; it
+  cannot show the direction of causation.
+- This is another batch of tests on top of about 70. The bar for calling
+  something found is the same as before: the prediction's sign and |t| > 2,
+  plus survival within year.
