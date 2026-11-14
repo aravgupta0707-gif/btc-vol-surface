@@ -158,3 +158,66 @@ is replicable from the strip of OTM options the surface already prices, and
 the archive already holds those strikes and their spreads. That is the next
 test, and the obvious risk is the same one in sharper form: replication needs
 the wings, and wing spreads on Deribit are wide.
+
+---
+
+## Part 2: the same trade with variance swaps. Written before testing
+
+The straddle test found the vol-point effect real (t -3.1) but the instrument
+wrong: a straddle's hedged P&L is gamma along one path, so its noise swamps
+the effect, and its two legs hedge each other poorly. A variance swap pays
+realised variance whatever path spot takes. Deribit lists none, so this
+replicates one from the options the surface prices.
+
+**Construction, per asset, per monthly archive inception, 30 days:**
+
+- **Strike.** The model-free variance strike from the fitted surface:
+  `K_var = (2/T) * sum_i (dK_i / K_i^2) * OTM_i`, undiscounted, puts below
+  the forward and calls above, on a fine strike grid across the 30-day
+  slice's **quoted range only**. Truncating there under-states the full
+  strike; the truncated strike is the one a replicating book can actually
+  buy, so it is the one used. The share of the full (clamped-wing) strike
+  that the truncation drops is reported.
+- **Payoff.** Realised variance from the hourly index, on **4-hour** returns
+  (the hedge interval, so the discretely monitored variance the dynamic leg
+  actually earns), annualised, over the same 30 days. Long P&L in variance
+  units is `RV - K_var`; reported per unit **vega notional**, i.e. divided by
+  `2 sqrt(K_var)`, which is vol points.
+- **Costs, both paid by either side.** (a) The strip's spread, paid once at
+  entry: `(2/T) * sum_i (dK_i / K_i^2) * half_spread_i`, each half-spread
+  from the archive's measured curve (`hedge_fits/spreads_all`, vol units
+  times Black vega). (b) The futures hedge of the log contract, rebalanced
+  every 4 hours: holding `(2/T)(1/F_t - 1/F_0)` per unit variance notional,
+  so turnover is `(2/T) * sum |1/F_t - 1/F_{t-1}| * F_t`, charged at 5 bps.
+
+**The book:** long ETH variance, short BTC variance, equal vega notional.
+
+**Predictions.**
+
+- **V1.** The single-leg premium: short BTC variance earns more than short
+  ETH variance, gross, by a margin in the same direction as the straddle
+  legs (BTC +121 bps, ETH +28).
+- **V2.** Gross book P&L positive with **t > 2** — higher than the straddle
+  book's 1.90, because the path noise is gone. Expected size near the
+  ATM vol-point gap (-4.0 vol pts), adjusted for skew: the variance strike
+  includes the wings, which are steeper on BTC in 2023-26.
+- **V3.** The legs hedge each other better than the straddles did: the
+  correlation of the two legs' P&L above the straddles' 0.65.
+- **V4.** Net of costs, positive. Costs are expected to be **lower** than the
+  straddle book's 122 bps-equivalent, because OTM wing options have small
+  absolute spreads and the hedge trades on 4-hour returns. This is the
+  least certain prediction: wing spreads in vol terms are wide.
+
+**What counts against:** V2 fails (gross t < 2) — the noise was not the
+problem, the effect is just small in money; or V4 fails — the variance
+instrument is cleaner but replicating it costs as much as the effect.
+
+**Known issues, stated up front:**
+- Truncation: the quoted range on a 30-day slice spans roughly ±1.5-2
+  standard deviations, so the replicated strike misses some wing variance,
+  and a big move beyond the range realises variance the strip never bought.
+  That makes long variance look better and short variance worse in crash
+  months; it is reported, not corrected.
+- The same 74 months, already looked at in Part 1. This is a different
+  instrument on the same sample, not new data.
+- Costs are modelled from measured half-spreads, not from executed trades.
