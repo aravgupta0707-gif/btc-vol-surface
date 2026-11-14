@@ -124,6 +124,52 @@ def cdf(surface, price: float, T: float, width: float = 4.0,
     return float(np.interp(k_target, k, cumulative) / total)
 
 
+def digital_cdf(surface, price: float, T: float) -> float:
+    """
+    P(S_T <= price) from the smile *at* that strike -- no integration.
+
+    Breeden-Litzenberger's first derivative: the undiscounted put's slope in
+    strike is the probability of finishing below it. With total variance
+    w(k) the put is Black's, and differentiating through the smile gives
+
+        P(S_T <= K) = N(-d2) + phi(d2) * w'(k) / (2 sqrt(w))
+
+    i.e. the flat-vol digital plus a skew correction. This is the price of a
+    tight put spread, which is what the market actually quotes.
+
+    Why it exists alongside `cdf`: `cdf` integrates the density -- the
+    *second* derivative -- across the whole k grid and normalises by its
+    total. Any error anywhere on that grid leaks into every probability, and
+    the clamped wings and the kinks where they meet the fit are exactly where
+    the second derivative is worst. Across Track A that made P(below 60k)
+    correlate +0.85 with the density's total mass (HANDOFF §5). This one
+    reads only w and w' at k: inside a slice's quoted range, nothing outside
+    it can move the answer.
+
+    Uses a one-sided difference when a central one would straddle the edge of
+    the quoted range, so a strike just inside the edge does not pick up the
+    kink where the clamp begins.
+    """
+    from scipy.stats import norm
+
+    forward = surface.forward(T)
+    k = float(np.log(price / forward))
+    w = float(surface.total_variance(k, T))
+    if w <= 0:
+        return float("nan")
+    lo, hi = surface.is_extrapolated(price, T)["supported_k_range"]
+    if k + _H > hi and k - _H >= lo:
+        w1 = (w - float(surface.total_variance(k - _H, T))) / _H
+    elif k - _H < lo and k + _H <= hi:
+        w1 = (float(surface.total_variance(k + _H, T)) - w) / _H
+    else:
+        w1 = (float(surface.total_variance(k + _H, T))
+              - float(surface.total_variance(k - _H, T))) / (2 * _H)
+    sqrt_w = np.sqrt(w)
+    d2 = -k / sqrt_w - sqrt_w / 2
+    return float(np.clip(norm.cdf(-d2) + norm.pdf(d2) * w1 / (2 * sqrt_w), 0.0, 1.0))
+
+
 def probability_between(surface, low: float, high: float, T: float,
                         **kwargs) -> float:
     """P(low < S_T <= high)."""

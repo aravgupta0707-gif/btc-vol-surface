@@ -464,3 +464,39 @@ by downside realised vol that a call-bid surface does not price."** The
 trade it suggests — stop selling (or buy) the put wing when funding is high —
 is the one to test properly next, with spreads, on the live book as well as
 the archive.
+
+---
+
+## H8. Sell the put wing only when funding is low? Written before testing
+
+H7's post-hoc split suggested the 30-day put-wing premium is about a third of
+what is sold when funding is low and about zero when it is high. That was at
+mid, with no spread, split at the full-sample median — so it used the future
+twice. This states a tradeable version before running it.
+
+**The trade.** At each monthly archive inception, sell one BTC 30-day put at
+z = -1 (about a 0.16-delta put), delta-hedged on a 4-hour clock with 5 bps
+slippage, entry spread measured from the archive's book: exactly the
+`hedge_frequency` cell (`tenor 30, z -1.0, time 4h, 5 bps`). Trade only when
+30-day trailing perp funding at entry is **below the median of funding on
+all earlier inception days** (expanding, at least 6), so the threshold uses
+nothing unknown at entry.
+
+**Predictions.**
+1. Rule-on months: mean net bps of spot positive with t > 2.
+2. Rule-on minus rule-off: positive, Welch t > 2.
+3. Same sign of (2) at z = -1.5 and z = -0.5 (neighbouring strikes, same
+   rule, same costs).
+4. The ATM straddle (z = 0) shows the same direction, weaker — H6 found the
+   effect on the ATM premium too.
+
+**What counts against:** rule-on net t < 2, or the on/off difference
+vanishing once costs and the expanding threshold are applied. Then H7's split
+was a mid-price, hindsight artefact.
+
+**This is not an independent test.** The lead came from the same 30-day
+monthly archive days, priced by a near-identical hedge simulation. What this
+adds is costs and a threshold without lookahead, nothing more; an
+out-of-sample test needs data this project does not have (Track A is two
+months). A pass here is "survives costs and an honest threshold", not
+"confirmed". Samples are about 76 months, roughly half on.

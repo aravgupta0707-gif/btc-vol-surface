@@ -195,3 +195,64 @@ class TestTailReport:
                           levels={"near": 79_000.0, "deep": 20_000.0})
         assert not out["levels"]["near"]["extrapolated"]
         assert out["levels"]["deep"]["extrapolated"]
+
+
+class TestDigitalCdf:
+    """
+    P(S_T <= K) from the smile's level and slope at K (`digital_cdf`).
+
+    The property that matters is the one the integrated `cdf` lacks: a level
+    inside the quoted range cannot be moved by anything outside it.
+    """
+
+    def test_flat_vol_is_exactly_the_lognormal_cdf(self):
+        from surface.density import digital_cdf
+
+        T, sigma = 0.25, 0.5
+        surface = flat(sigma, T)
+        w = sigma**2 * T
+        for price in (50_000.0, 80_000.0, 120_000.0):
+            k = np.log(price / FORWARD)
+            assert digital_cdf(surface, price, T) == pytest.approx(
+                norm.cdf((k + w / 2) / np.sqrt(w)), abs=1e-9)
+
+    def test_agrees_with_the_integrated_cdf_where_the_density_is_clean(self):
+        from surface.density import digital_cdf
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        for price in (60_000.0, 75_000.0, 80_000.0, 90_000.0, 100_000.0):
+            assert digital_cdf(surface, price, 0.25) == pytest.approx(
+                cdf(surface, price, 0.25), abs=2e-3)
+
+    def test_a_downside_skew_lowers_the_at_the_money_digital(self):
+        # rho < 0, so w rises to the left and w'(0) < 0. The correction
+        # phi(d2) w' / (2 sqrt w) is then negative: a tight put spread at the
+        # forward is cheaper than the flat-vol digital, because the vol on
+        # its lower strike is higher than on its upper one.
+        from surface.density import digital_cdf
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        w = float(surface.total_variance(0.0, 0.25))
+        flat_digital = norm.cdf(np.sqrt(w) / 2)
+        assert digital_cdf(surface, FORWARD, 0.25) < flat_digital
+
+    def test_moving_the_clamp_does_not_move_a_level_inside_both_ranges(self):
+        from surface.density import digital_cdf
+
+        narrow = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.15, 0.15)})
+        wide = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.40, 0.40)})
+        level = FORWARD * np.exp(-0.10)
+        assert digital_cdf(narrow, level, 0.25) == pytest.approx(
+            digital_cdf(wide, level, 0.25), abs=1e-9)
+        # The integrated cdf, by contrast, does move: the narrow surface's
+        # clamped wings change the mass it normalises by.
+        assert abs(cdf(narrow, level, 0.25) - cdf(wide, level, 0.25)) > 1e-4
+
+    def test_a_level_just_inside_the_edge_ignores_the_kink(self):
+        from surface.density import digital_cdf
+
+        clamped = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.15, 0.15)})
+        free = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        level = FORWARD * np.exp(-0.1495)
+        assert digital_cdf(clamped, level, 0.25) == pytest.approx(
+            digital_cdf(free, level, 0.25), abs=2e-3)
