@@ -103,6 +103,12 @@ archive's own book:
 | Whalley-Wilmott band, γ chosen in hindsight | +43 | 1.2 | 44 |
 | Whalley-Wilmott band, γ **walked forward** | +59 to +75 | 1.4–2.1 | 65–70 |
 
+The live book agrees on cost: on 81 daily expiries over two months of hourly
+chains, the spread paid once is 8-10 bps against a 125-164 bps premium, and
+net is indistinguishable from zero (`HANDOFF.md` §10.5). Its 7- and 30-day
+positions all have hedging gaps from laptop sleep, so the live 30-day trade
+is still untested.
+
 **Sharpe and drawdown, with the caveat that matters more than the number.**
 For the in-sample band cell above (BTC 30-day ATM, 5 bps, 2023–26, n=44):
 Sharpe **0.63**, max drawdown **−624 bps of spot**, hit rate 61%, worst
@@ -147,6 +153,15 @@ then reports against them. On the 30-day DVOL premium, 1,977 days:
   not much there. This data cannot tell those apart.
 
 ![Funding against the premium, raw and with the vol level partialled out](figures/premium_funding.png)
+
+**How the surface moves.** `SURFACE_PCA.md`, also written before running:
+PCA of 12-hour changes in the fitted live surface (tenor x standardised
+moneyness, ~50 changes per asset). Three factors explain 96-97%: a level
+shift that is 5-7x larger at 7 days than at 90, then skew, then a short-end
+term factor. BTC and ETH share all three (PC1 cosine 1.00). Skew moves with
+spot, call wing up when spot rises (corr +0.36 BTC, +0.64 ETH).
+
+![PCA loadings of the BTC surface](figures/surface_pca.png)
 
 ---
 
@@ -290,6 +305,8 @@ python scripts/rnd_monitor.py        # risk-neutral density
 python scripts/vrp_hypotheses.py     # why the premium shrank [~25 s]
 python scripts/make_figures.py       # regenerate every figure above
 python scripts/make_figures.py premium   # premium figures only, no live chain needed
+python scripts/surface_pca.py        # surface factors on the live chains [~5 min first run]
+python scripts/make_figures.py pca       # its loadings figure
 ```
 
 A clone gets the code and nothing else — every data directory is gitignored.
@@ -309,4 +326,7 @@ The short ones; `HANDOFF.md` §5 has the full list with measurements.
 - **The surface clamps rather than extrapolates** beyond the quoted range.
 - **The RND monitor's tail probabilities move with its own integration error** —
   P(below 60k) correlates +0.85 with the density's total mass.
+- **The live data has gaps.** The collector runs on a laptop; sleep leaves
+  holes that leave long live positions part-unhedged and cost the surface
+  PCA half its 12-hour pairs.
 - **The dashboard is not built.**

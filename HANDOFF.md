@@ -5,7 +5,8 @@ Everything needed to pick this project up cold. Written 2026-09-09, updated
 hedging-rule work landed (§12, §12.1, §12.2), and putting that rule on the
 live book turned up a marking bug that had been freezing its hedge (§10.5).
 Updated 2026-10-25 for the study of why the premium shrank (§10.6,
-`HYPOTHESES.md`).
+`HYPOTHESES.md`), and 2026-11-14 for the two-month live-book rerun (§10.5)
+and the surface PCA (`SURFACE_PCA.md`).
 
 **The repository has a remote now**: `origin` is
 `github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
@@ -22,8 +23,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **430 tests, 50
-commits, 12,202 lines of Python, zero remaining stubs.**
+Every build-guide stage but the dashboard is complete. **430 tests, 51
+commits, 12,554 lines of Python, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -35,7 +36,9 @@ commits, 12,202 lines of Python, zero remaining stubs.**
 | Greeks + validation | done | delta matches Deribit to 0.0007 median |
 | Strategy + backtest | **done** | 79-day study, 314 positions — §10 |
 | Costs + hedging rule | **done** | 128 cells, clocks vs bands, walked forward — §12 |
-| Write-up | **this file, §10 and §12** | — |
+| Write-up | **done** | `README.md`; detail in this file, §10 and §12 |
+| Why the premium shrank | **done** | `HYPOTHESES.md` — pre-registered, H0-H6 |
+| Surface factors | **done** | `SURFACE_PCA.md` — 3 factors, 96-97% of 12h changes |
 | Dashboard | **not started** | — |
 
 The statistical claim that §5 used to call open is now answered, and the
@@ -93,16 +96,17 @@ and ETH (inverse books) and USDC (linear book, six underlyings in one call —
 BTC, ETH, SOL, XRP, AVAX, HYPE, TRX). Writes
 `data/raw/<currency>_chain_<stamp>.parquet`, ~5 MB/day for all three.
 
-At 2026-09-22: **BTC 247 snapshots, ETH and USDC 223 each**, from
-2026-09-07, 38.6 MB — ~15 days at ~17 snapshots a day rather than 24. Every
+At 2026-11-14: **BTC 943 snapshots, ETH and USDC 919 each**, from
+2026-09-07, 159 MB — ~68 days at ~14 snapshots a day rather than 24. Every
 long gap is the laptop sleeping, and each ends in a
 catch-up run at an odd minute — `StartWhenAvailable` firing on wake.
 `-WakeToRun` would close them at the cost of waking the machine hourly;
 deliberately not enabled. So Track A is hourly but **not contiguous**, which
 is what limits anything needing an unbroken path.
 
-**Track B — the Tardis.dev free archive. COMPLETE: 79/79 days, BTC and
-ETH**, 105 MB. First day of each month, `options_chain` from 2020-03-01. No
+**Track B — the Tardis.dev free archive. 81 days, BTC and ETH** (the 79
+of 2020-03 to 2026-09 that every study here uses, plus 2026-10-01 and
+11-01 fetched since by the archive task). First day of each month, `options_chain` from 2020-03-01. No
 API key, no payment, but the endpoint needs *some* `Authorization` header
 present (a 403 without one) and rejects Range requests. `data/tardis.py`
 streams and downsamples on the fly — one day is ~516 MB gzipped and ~10.8M
@@ -384,9 +388,11 @@ does, and 70-90% of the in-sample level is reachable. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
-**Track A is not contiguous.** ~16 days of hourly snapshots with sleep
-gaps. Long holds and anything needing an unbroken path are limited by it;
-positions left unhedged over a gap are marked in `hold_to_expiry`.
+**Track A is not contiguous.** ~68 days of hourly snapshots with sleep
+gaps. Long holds and anything needing an unbroken path are limited by it:
+every 7- and 30-day live position had an 11-54h hedging gap (§10.5), and the
+surface PCA lost about half its possible 12h pairs (`SURFACE_PCA.md`).
+Positions left unhedged over a gap are marked in `hold_to_expiry`.
 
 **The theory-gate ratio is approximate.** It uses the textbook
 `0.8 * S * sqrt(T)` ATM vega proxy and assumes P&L accrues linearly in time,
@@ -506,8 +512,8 @@ better artifact than a 1-day table would have been.
    talking points §9 lists should have concrete answers ready; three of them
    are unusually well served by §10 and §12, and the fourth — what would
    break this in a real market — now has an empirical answer rather than a
-   hypothetical one, in §10.5. **`VIOLATIONS.md` still has an unfilled
-   "Resolution" field**, which is exactly the question §9 says to prepare.
+   hypothetical one, in §10.5. `VIOLATIONS.md`'s "Resolution" field, the
+   question §9 says to prepare, was filled 2026-11-14.
 
 2. **Phase 7 — the dashboard.** `dashboard/app.py` is still the 14-line stub
    and is the last unstarted build-guide stage. The `VolSurface` object
@@ -551,8 +557,10 @@ beyond trailing realised (RMSE 0.208 vs 0.215). Where data genuinely exists is
 the hourly path (58k hours), and the question living there is hedging policy,
 which §12.1 and §12.2 now answer with a closed form. So a fitted policy has to
 beat Whalley-Wilmott chosen out of sample, not a clock — and §12.2 is the
-harness to judge it with. Revisit when Track A has months rather than days and
-step 6 has established the factor structure.
+harness to judge it with. The factor structure is now established
+(`SURFACE_PCA.md`: level, skew, short-end term, 96-97% of 12h changes), so
+the remaining constraint is Track A's length and its gaps, not the absence
+of a structure to model.
 
 ---
 
@@ -657,10 +665,6 @@ $20.8M inverse), so much of any spread will be microstructure rather than
 signal. Needs the vol-space spread filter to separate them.
 
 ### Also considered, not recommended yet
-
-**Surface PCA** (level/slope/curvature factors from the fitted time series)
-is the natural sequel once weeks of Track A exist, but it is wall-clock
-gated and needs more history than B does.
 
 **Altcoin surfaces** (SOL, XRP, AVAX, HYPE, TRX) come free with the USDC
 call and are already being banked, but daily volumes of $7k-159k make them

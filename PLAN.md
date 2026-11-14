@@ -234,7 +234,7 @@ until this is handled, and Phase 6's hedge ratios depend on it being right.
 **Checkpoint:** delta matches Deribit's within a small tolerance across
 liquid strikes.
 
-### Phase 6 — strategy and backtest  [machinery done, statistics pending]
+### Phase 6 — strategy and backtest  [done — HANDOFF §10, §12]
 
 Two backtests, one per data track:
 
@@ -256,8 +256,15 @@ trusting any Sharpe number.
 ### Phase 7 — dashboard and write-up
 
 - [ ] Streamlit + plotly 3D surface, per-expiry smile, backtest P&L
-- [ ] README: pipeline diagram, the violations log from Phase 4, final
+- [x] README: pipeline diagram, the violations log from Phase 4, final
       metrics with honest caveats, surface snapshots
+
+### Beyond the brief  [done]
+
+- [x] Why the premium shrank — `HYPOTHESES.md`, pre-registered, six
+      hypotheses plus a fear-vs-leverage follow-up
+- [x] Live book held to expiry on two months of Track A — HANDOFF §10.5
+- [x] Surface factor structure — `SURFACE_PCA.md`, pre-registered
 
 ---
 
