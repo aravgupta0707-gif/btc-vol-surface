@@ -221,3 +221,23 @@ instrument is cleaner but replicating it costs as much as the effect.
 - The same 74 months, already looked at in Part 1. This is a different
   instrument on the same sample, not new data.
 - Costs are modelled from measured half-spreads, not from executed trades.
+
+## Part 2 results
+
+Run: `python scripts/varswap.py` (primary: 4h hedge, 5 bps). Predictions in `73ceb86`.
+
+**Verdict: V1-V3 pass, V4 fails. The variance instrument fixes the noise but not the costs.**
+
+| | Prediction | Result |
+|---|---|---|
+| V1 | short BTC variance earns more than short ETH | BTC +2.79 vol pts gross, ETH -2.05 |
+| V2 | book gross t > 2, above the straddle's 1.90 | **+4.60 (t 2.89)**; entry rule on: +5.86 (t 3.77), n=35 |
+| V3 | the legs correlate above the straddles' 0.65 | **0.89**; book sd 14.0 against 26.8 and 30.7 for the legs |
+| V4 | positive net | **Fails: -0.12 (t -0.08)**; rule on +1.23 (t 0.85). Costs 4.72 vol pts: strip spreads 1.7, futures hedge 3.0 |
+
+Truncating to the quoted range (about ±2.1-2.3 sd) drops about 5.5% of the full
+strike. Gross by era: 2020-22 +6.36 (t 1.95), 2023-26 +3.31 (t 2.41). So the effect
+holds in the modern era and the instrument captures it cleanly. The
+log-contract's futures hedge costs most, so how often it rebalances and at what
+slippage decide the result. The robustness runs (`--step 24`, `--slip 2`) are
+not reported yet.
