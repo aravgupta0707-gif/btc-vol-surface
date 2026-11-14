@@ -500,3 +500,48 @@ adds is costs and a threshold without lookahead, nothing more; an
 out-of-sample test needs data this project does not have (Track A is two
 months). A pass here is "survives costs and an honest threshold", not
 "confirmed". Samples are about 76 months, roughly half on.
+
+## H8 results
+
+Run: `python scripts/vrp_hypotheses.py H8`. Predictions committed in
+`694570f` before the code existed. Funding is lagged one day: the 30-day
+trailing value on date d includes all of day d, and inceptions are at 00:00.
+
+**Verdict: all four predictions pass — and the pass is mostly 2021-22.**
+
+| z | rule ON (low funding) | rule OFF | every month | on-off Welch t |
+|---|---|---|---|---|
+| -1.5 | **+28.3 (t 2.80)** n=32 | -19.6 (t -1.03) | +9.4 (t 0.93) | **+2.23** |
+| **-1.0** | **+46.3 (t 3.01)** n=38 | -27.8 (t -1.22) | +17.6 (t 1.34) | **+2.69** |
+| -0.5 | +51.4 (t 2.56) n=38 | -8.1 (t -0.30) | +26.9 (t 1.58) | +1.75 |
+| 0 (straddle) | +88.7 (t 2.14) n=38 | +5.9 (t 0.10) | +66.4 (t 1.90) | +1.13 |
+
+BTC 30-day, one option short, 4-hour clock, 5 bps, bps of spot. At z = -1
+the rule-on net is +21% of premium sold against -20% when off; costs average
+15 bps. Predictions 1 and 2 pass at z = -1, 3 (same sign at -1.5 and -0.5)
+passes, 4 (ATM same direction, weaker) passes.
+
+Robustness, not part of the test:
+
+- **Hedging rule and cost.** At z = -1 the on/off gap holds in every one of
+  20 cells (5 rules x 4 slippages): rule-on +12 to +56, rule-off -9 to -44.
+  Rule-on t > 2 in 12 of 20.
+- **By era — the important caveat.** 2020-22: on **+86.3 (t 3.39)**, n=18,
+  off -33.3. 2023-26: on **+10.2 (t 0.71)**, n=20, off -25.9. The gap keeps
+  its sign in the modern era (+36 bps) but the rule-on months barely make
+  money. 12 of the 38 on-months are 2022, a year of low funding and a falling
+  market in which short puts that were hedged did well.
+- **Within year**, splitting each year at its own funding median: low funding
+  beats high in 5 of 7 years (loses in 2022 narrowly and in 2024).
+- **Dropping each year in turn**, rule-on mean stays +33 to +57.
+- **ETH**, the same rule on ETH's own funding: on +18.6 (t 0.77), off -18.5.
+  Same direction, not significant.
+
+What this says: funding is a genuine **filter** — over six years, every
+hedge rule and cost, and most years taken alone, the put wing sold when
+funding is high does worse than when it is low, which is the H7 mechanism
+showing up in money. But as a **trade** in 2023-26 it earns +10 bps a month on
+a 0.16-delta put, t 0.7: the filter avoids losses more than it finds profits.
+That is the same shape as everything else in this project — the premium
+was there in 2021-22 and is now about the size of costs — with one useful
+addition: when funding is high, don't be short the put wing.

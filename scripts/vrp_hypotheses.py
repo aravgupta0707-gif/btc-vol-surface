@@ -526,6 +526,43 @@ def test_h7(panel: pd.DataFrame, funding: pd.Series, semi: pd.DataFrame,
     row("skew ~ fund + ATM iv", "skew", ["funding30", "atm_iv"], lags=1, data=m)
 
 
+def test_h8(funding: pd.Series) -> None:
+    """Sell BTC 30d puts only when funding is below its expanding median."""
+    header("H8  Funding-conditioned put selling, with costs and no lookahead")
+    from scipy.stats import ttest_ind
+
+    cells = pd.read_parquet(CACHE / "hedge_cells" / "cells_all.parquet")
+    cells = cells[(cells["skipped"] == "") & cells["supported"].astype(bool)
+                  & (cells["asset"] == "BTC") & (cells["tenor"] == 30)
+                  & (cells["policy"] == "time 4h") & (cells["slip_bps"] == 5.0)]
+    cells = cells.assign(date=pd.to_datetime(cells["date"]))
+    # Inceptions are at 00:00 UTC; funding30 on date d includes all of day d,
+    # so the value known at entry is the previous day's.
+    known = funding.shift(1)
+    print("  BTC 30d, short one option at z, 4h clock, 5 bps; bps of spot per inception")
+    print(f"  {'z':>5} {'rule ON':>22} {'rule OFF':>22} {'every month':>22} {'on-off t':>9}")
+    for z in (-1.5, -1.0, -0.5, 0.0):
+        c = cells[cells["z"] == z].set_index("date").sort_index()
+        f = known.reindex(c.index)
+        threshold = f.expanding(min_periods=6).median().shift(1)
+        decided = threshold.notna() & f.notna()
+        on = c.loc[decided & (f < threshold), "net_bps"]
+        off = c.loc[decided & (f >= threshold), "net_bps"]
+
+        def cell(x):
+            t = x.mean() / (x.std(ddof=1) / np.sqrt(len(x))) if len(x) > 1 else np.nan
+            return f"{x.mean():+7.1f} (t {t:+5.2f}) n={len(x):<3d}"
+
+        diff_t = ttest_ind(on, off, equal_var=False).statistic
+        print(f"  {z:+5.1f} {cell(on):>22} {cell(off):>22} {cell(c['net_bps']):>22} {diff_t:+9.2f}")
+        if z == -1.0:
+            share_on = (on / c.loc[on.index, "premium_bps"]).mean()
+            share_off = (off / c.loc[off.index, "premium_bps"]).mean()
+            print(f"        net as share of premium: on {share_on:+.0%}, off {share_off:+.0%}; "
+                  f"mean costs {c['spread_bps'].mean() + c['slippage_bps'].mean():.1f} bps")
+    print("  (Welch t for on minus off; expanding median of earlier inceptions' funding, min 6)")
+
+
 def test_h3(panel: pd.DataFrame) -> None:
     header("H3  Is the premium jump compensation?")
     print("  Variances in annualised vol^2 points; 'vol' columns are sqrt of the mean.\n")
@@ -742,6 +779,9 @@ def main() -> int:
     fetch = "--fetch" in sys.argv
     btc_dvol = fetch_dvol("BTC", fetch)
     btc = build_panel("BTC", btc_dvol)
+    if "H8" in sys.argv:
+        test_h8(trailing_funding("BTC"))
+        return 0
     if "H7" in sys.argv:
         test_h7(btc, trailing_funding("BTC"), forward_semivariance("BTC"), surface_skew("BTC"))
         return 0
@@ -757,6 +797,7 @@ def main() -> int:
     test_posthoc(btc, btc_dvol)
     test_h6(btc, trailing_funding("BTC"), trailing_drawdown("BTC"), surface_skew("BTC"))
     test_h7(btc, trailing_funding("BTC"), forward_semivariance("BTC"), surface_skew("BTC"))
+    test_h8(trailing_funding("BTC"))
 
     btc.to_parquet(CACHE / "vrp_hypotheses_btc.parquet")
     return 0
