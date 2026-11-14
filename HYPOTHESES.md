@@ -405,3 +405,62 @@ Known issues, stated up front:
 - This is another batch of tests on top of about 70. The bar for calling
   something found is the same as before: the prediction's sign and |t| > 2,
   plus survival within year.
+
+## H7 results
+
+Run: `python scripts/vrp_hypotheses.py H7` (also part of the full run). The
+predictions above were committed (`662d274`) before this code existed.
+
+**Verdict: 7a contradicted, 7b and 7c supported.** Funding is real
+information that implied under-uses, and the realised vol it predicts is on
+the **downside**, while the options market is bidding the **upside**.
+
+| | Prediction | Result |
+|---|---|---|
+| identity | premium slope = minus realised slope | -0.542 and +0.542, exact |
+| 7a.1 | funding predicts upside vol more than downside | **Reversed.** Upside +0.38 (t 2.1), downside **+0.70 (t 2.8)**; difference t -3.3, non-overlapping t -3.1 (n=66). Within year: +0.48 vs +0.89 |
+| 7a.2 | upside share of realised rises with funding | **Falls**: -0.21 percentage points per funding point, t -4.0; within year t -4.9 |
+| 7b | skew falls with funding (call wing bid) | **Yes**: -0.29 vol pts per funding point (t -3.9), **-0.34 (t -5.2)** with ATM iv controlled; corr -0.53, n=74 |
+| 7c | funding survives trailing realised | **Yes**: keeps 109% of its slope (-0.59, t -2.7); within year -0.77 (t -3.6); non-overlapping -0.63 (t -2.1). corr(funding, trailing RV) -0.05 |
+
+What the numbers say:
+
+- **High funding is followed by downside vol, not upside.** The obvious story
+  — leverage marks rallies, rallies realise variance — has the sign wrong.
+  What follows high funding is disproportionately *down*-move variance, and
+  the forward 30-day return is negatively correlated with funding (-0.19).
+  That is what a deleveraging or liquidation cascade looks like from the
+  return series: crowded longs unwind into the downside.
+- **The options market prices the crowd's direction, not its leverage.**
+  When funding is high the call wing richens relative to puts (7b, |t| 5).
+  So at exactly the times the subsequent realised vol is skewed down, the
+  surface is skewed *up*. Implied ends up below what realises, and the
+  premium shrinks — the H6 result, now with a mechanism.
+- **It is not recent volatility in disguise.** Funding is uncorrelated with
+  trailing realised (-0.05) and its slope does not shrink when trailing
+  realised is added (7c). Trailing realised has its own, separate effect
+  (higher recent realised, lower premium for a given DVOL), which is ordinary
+  implied under-reaction to realised.
+
+**Post hoc, not pre-registered:** if the mechanism is right, the put wing
+should be where the premium disappears when funding is high. On the 30-day
+monthly archive (`vrp_surface.parquet`, mid prices, delta-hedged every 4h),
+the seller's hedged P&L as a share of premium, split at median funding:
+
+| z | -2.0 | -1.5 | -1.0 | -0.5 | 0 | +0.5 | +1.0 | +1.5 |
+|---|---|---|---|---|---|---|---|---|
+| high funding | +2% | +2% | +1% | +4% | +5% | +9% | +20% | +50% |
+| low funding | +36% | +34% | +29% | +20% | +13% | +26% | +47% | +58% |
+| funding slope t (with ATM iv) | -1.4 | -1.7 | -2.0 | -2.6 | -2.7 | -1.9 | -1.8 | -0.5 |
+
+Put-wing premium is roughly a third of what is sold when funding is low and
+roughly zero when it is high; the call wing keeps a premium either way. The
+7-day tenor shows nothing (n 20-44, and noisy). This is one split on n≈75,
+at mid with no spread, looked at after seeing 7a — a lead, not a finding.
+
+What this changes: the summary becomes **"the premium scales with the vol
+level, and is lower when perp funding is high because leverage is followed
+by downside realised vol that a call-bid surface does not price."** The
+trade it suggests — stop selling (or buy) the put wing when funding is high —
+is the one to test properly next, with spreads, on the live book as well as
+the archive.
