@@ -23,8 +23,8 @@ state of play, what was learned, and what to do next.
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **430 tests, 51
-commits, 12,554 lines of Python, zero remaining stubs.**
+Every build-guide stage is complete, the dashboard last (2026-11-14).
+**443 tests, zero remaining stubs.**
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -39,11 +39,10 @@ commits, 12,554 lines of Python, zero remaining stubs.**
 | Write-up | **done** | `README.md`; detail in this file, §10 and §12 |
 | Why the premium shrank | **done** | `HYPOTHESES.md` — pre-registered, H0-H6 |
 | Surface factors | **done** | `SURFACE_PCA.md` — 3 factors, 96-97% of 12h changes |
-| Dashboard | **not started** | — |
+| Dashboard | **done** | `streamlit run dashboard/app.py` — `tests/test_dashboard.py`, 13 |
 
 The statistical claim that §5 used to call open is now answered, and the
-answer is mostly negative: see §10. The remaining build-guide gap is the
-dashboard.
+answer is mostly negative: see §10. No build-guide stage remains open.
 
 ### Running things
 
@@ -433,7 +432,12 @@ radius to refine a question this project does not need answered. Recorded as
 a limitation, with the live-book fix (§10.5) kept because there it was
 breaking a measurement rather than refining one.
 
-**`dashboard/app.py` is still the original stub.**
+**The dashboard reads cached study outputs, it does not rerun them.** The
+Backtest, Live book, History and Premium tabs show whatever
+`hedge_frequency.py`, `hold_to_expiry.py`, `surface_pca.py` and
+`vrp_hypotheses.py` last wrote to `data/research/`; rerun those to refresh
+them. Only the Surface and Density tabs fit live, from the chosen chain
+(about 5 s per snapshot, cached).
 
 ---
 
@@ -515,11 +519,16 @@ better artifact than a 1-day table would have been.
    hypothetical one, in §10.5. `VIOLATIONS.md`'s "Resolution" field, the
    question §9 says to prepare, was filled 2026-11-14.
 
-2. **Phase 7 — the dashboard.** `dashboard/app.py` is still the 14-line stub
-   and is the last unstarted build-guide stage. The `VolSurface` object
-   already serves everything it needs, and there is more worth showing than
-   when it was scoped: the RND monitor, the premium-across-the-smile surface,
-   and the rule comparison.
+2. **Phase 7 — the dashboard. Done 2026-11-14.** `streamlit run
+   dashboard/app.py`. Layout in `app.py`, every number in `dashboard/data.py`
+   (tested, and reusing `VolSurface`, `surface.density` and
+   `compute_metrics` rather than recomputing). Six tabs: surface + smile per
+   snapshot, implied density, Track A history, the §12 sweep as equity curve
+   / drawdown / cost waterfall / rule grid, the live book, the premium. Its
+   backtest tab reproduces §12's cell exactly (Sharpe 0.63, max DD −624 bps).
+   `VOL_DATA_ROOT` points it at another `data/` (e.g. from a worktree). It
+   also fixed the "below 0" level: levels now step by a round tenth of the
+   forward; `scripts/rnd_monitor.py` still has the old fixed step.
 
 3. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and

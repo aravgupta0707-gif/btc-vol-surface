@@ -282,9 +282,9 @@ change already broke the trade once within the sample.
 | Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
 | Surface factors | done | `surface_pca.py` — 3 factors, 96-97% of 12h changes |
 | Write-up | **this file** | — |
-| Dashboard | not started | `dashboard/app.py` is a stub |
+| Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**430 tests.** `python -m pytest`
+**443 tests.** `python -m pytest`
 
 ## Running it
 
@@ -307,7 +307,19 @@ python scripts/make_figures.py       # regenerate every figure above
 python scripts/make_figures.py premium   # premium figures only, no live chain needed
 python scripts/surface_pca.py        # surface factors on the live chains [~5 min first run]
 python scripts/make_figures.py pca       # its loadings figure
+
+streamlit run dashboard/app.py       # the dashboard (VOL_DATA_ROOT=<path to data/> to point it elsewhere)
 ```
+
+**The dashboard** shows the live surface and the studies' own outputs, so
+nothing on it is computed separately from the write-up: the 3D surface and
+per-expiry smile against market mids and Deribit's mark for any hourly
+snapshot on disk; the implied density with its tail table and mass check;
+ATM vol by tenor and skew against spot through Track A; the hedging sweep as
+an equity curve with drawdown, a cost waterfall and the full rule-by-cost
+grid; the live book held to expiry; and the premium over six years. The
+backtest tab reproduces the figures above exactly (Sharpe 0.63, max drawdown
+−624 bps for the BTC 30-day `ww 0.001` cell at 5 bps).
 
 A clone gets the code and nothing else — every data directory is gitignored.
 `HANDOFF.md` §2 says what has to be moved separately.
@@ -329,4 +341,3 @@ The short ones; `HANDOFF.md` §5 has the full list with measurements.
 - **The live data has gaps.** The collector runs on a laptop; sleep leaves
   holes that leave long live positions part-unhedged and cost the surface
   PCA half its 12-hour pairs.
-- **The dashboard is not built.**

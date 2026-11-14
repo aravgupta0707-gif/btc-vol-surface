@@ -255,7 +255,8 @@ trusting any Sharpe number.
 
 ### Phase 7 — dashboard and write-up
 
-- [ ] Streamlit + plotly 3D surface, per-expiry smile, backtest P&L
+- [x] Streamlit + plotly 3D surface, per-expiry smile, backtest P&L —
+      `dashboard/app.py`, data layer in `dashboard/data.py`, 13 tests
 - [x] README: pipeline diagram, the violations log from Phase 4, final
       metrics with honest caveats, surface snapshots
 
