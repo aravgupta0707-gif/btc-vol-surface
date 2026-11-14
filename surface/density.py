@@ -223,7 +223,11 @@ def tail_report(surface, T: float, levels: dict | None = None,
     }
     for label, price in (levels or {}).items():
         info = surface.is_extrapolated(price, T)
-        below = cdf(surface, price, T)
+        # The digital reads the smile at the level only, so a level inside
+        # the quoted range cannot be moved by the wings; outside it, fall
+        # back to the integrated density and flag it as extrapolated.
+        inside = not (info["outside_supported_range"] or info["beyond_fitted_maturities"])
+        below = digital_cdf(surface, price, T) if inside else cdf(surface, price, T)
         out["levels"][label] = {
             "price": float(price),
             "p_below": below,

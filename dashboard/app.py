@@ -135,7 +135,10 @@ with tabs[0]:
                        "surface clamps, so edges can be flat by construction.")
         with right:
             labels = {T: f"{pd.Timestamp(b['fits'][T]['expiry']):%d %b %y}  ({T * 365.25:.0f}d)" for T in Ts}
-            T = st.selectbox("Expiry", Ts, format_func=labels.get, index=min(2, len(Ts) - 1))
+            # Keyed to the snapshot: a different chain has different expiries,
+            # and Streamlit would otherwise carry the old selection across.
+            T = st.selectbox("Expiry", Ts, format_func=labels.get, index=min(2, len(Ts) - 1),
+                             key=f"smile_T_{asset}_{path}")
             s = D.smile(b, T)
             fig = go.Figure()
             fig.add_vrect(x0=s["lo"], x1=s["hi"], fillcolor=GREY, opacity=0.12, line_width=0,
@@ -175,7 +178,7 @@ with tabs[1]:
         st.info("No fitted surface for this snapshot.")
     else:
         surface, Ts = b["surface"], sorted(b["fits"])
-        T = st.selectbox("Horizon", Ts, key="rnd_T",
+        T = st.selectbox("Horizon", Ts, key=f"rnd_T_{asset}_{path}",
                          format_func=lambda T: f"{T * 365.25:.0f} days",
                          index=min(3, len(Ts) - 1))
         curve = D.density_curve(surface, T)

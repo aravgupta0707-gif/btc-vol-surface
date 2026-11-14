@@ -239,5 +239,27 @@ Truncating to the quoted range (about ±2.1-2.3 sd) drops about 5.5% of the full
 strike. Gross by era: 2020-22 +6.36 (t 1.95), 2023-26 +3.31 (t 2.41). So the effect
 holds in the modern era and the instrument captures it cleanly. The
 log-contract's futures hedge costs most, so how often it rebalances and at what
-slippage decide the result. The robustness runs (`--step 24`, `--slip 2`) are
-not reported yet.
+slippage decide the result.
+
+**Robustness (not the test)**, `python scripts/varswap.py --step N --slip B`:
+
+| hedge | slip | costs | net, every month | net, entry rule on |
+|---|---|---|---|---|
+| 1h | 5 bps | 7.64 | -3.68 (t -1.71) | -1.19 (t -0.79) |
+| **4h** | **5 bps** | **4.72** | **-0.12 (t -0.08)** | **+1.23 (t 0.85)** |
+| 4h | 2 bps | 2.89 | +1.70 (t 1.08) | +3.06 (t 2.05) |
+| 24h | 5 bps | 3.04 | +3.44 (t 1.47) | +3.03 (t 1.25) |
+| 24h | 2 bps | 2.22 | +4.26 (t 1.81) | +3.86 (t 1.58) |
+
+Strip spreads are fixed at about 1.7 vol points; the futures hedge runs from
+0.6 to 6 depending on how often it trades and at what cost. Hedging daily
+raises gross to +6.48 (t 2.74), because the measured variance changes, and
+leaves net positive but t under 2. One cell clears t 2 (4h, 2 bps, rule on),
+which is one of ten in a grid chosen after the primary failed.
+
+### What it means, both parts
+
+The relative-value effect is **real and clean in variance**: gross t 2.9,
+legs correlating 0.89, in both eras. It is not a trade at taker costs. It
+might be one for a desk that hedges at maker rates and can sit on daily
+rebalancing. The project cannot test that, because it has no fills.

@@ -530,7 +530,14 @@ better artifact than a 1-day table would have been.
    also fixed the "below 0" level: levels now step by a round tenth of the
    forward; `scripts/rnd_monitor.py` still has the old fixed step.
 
-3. **The dispersion trade properly** — long ETH vol / short BTC vol,
+3. **Dispersion, done 2026-11-14 — `DISPERSION.md`, pre-registered, two
+   parts.** Straddles: gross +92.5 bps (t 1.90), costs 122 bps, net
+   negative, and the entry rule adds nothing on a hedged path. The profit is
+   the BTC short; long ETH vol loses on its own. Replicated variance swaps
+   (`scripts/varswap.py`): gross +4.6 vol pts (t 2.89), legs correlate 0.89,
+   but strip spreads and the futures hedge cost 4.7, so net is about 0. It
+   is positive only at maker-like costs or daily hedging, never with t > 2
+   robustly. The original scope follows. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and
    an entry rule on the spread's own history. Still the largest effect found
    (-6.14 vol points a month, t 4.6 conditional) and the least examined. Better
@@ -539,12 +546,28 @@ better artifact than a 1-day table would have been.
    Note the asymmetry §12.2 found — a rule validated on BTC did not transfer to
    ETH — before assuming anything crosses between the two.
 
-4. **Fix the RND tail** (§5): normalise the density over the quoted range, or
-   mark a level as extrapolated when its *integration domain* leaves the quoted
-   strikes rather than only when the level itself does. Also fix the ETH
-   report's "below 0" level and its "BTC" heading.
+4. **RND tail, fixed 2026-11-14.** `surface.density.digital_cdf` reads
+   P(S<K) from the smile's level and slope at K (Breeden-Litzenberger's first
+   derivative, `N(-d2) + phi(d2) w'/(2 sqrt w)`). No integration is involved,
+   so a level inside the quoted range cannot be moved by the wings.
+   `tail_report` now uses it for every level inside the range and keeps the
+   integrated CDF, flagged as extrapolated, outside it. On 48 BTC surfaces
+   across Track A (90 days, P<60k), the correlation with the density's total
+   mass went from +0.29 to -0.06, and the change between samples fell from
+   2.73 to 1.64 points (sd), with the same mean (7.9-8.0%). The dashboard's
+   levels step by a round tenth of the forward, which removes "below 0".
+   Still open: `rnd_monitor.py`'s fixed step and the "BTC" heading in its ETH
+   report.
 
-5. **Why high funding means a lower premium** (§10.6, H6). Two cheap tests on
+5. **Funding mechanism, done 2026-11-14 — `HYPOTHESES.md` H7, H8.** High
+   funding is followed by *downside* realised vol (difference t -3.3), while
+   the surface bids the *call* wing (skew slope t -5.2). Funding is not a
+   proxy for trailing realised. H8: sell the 30-day z=-1 put only when funding
+   is below its expanding median. That earns +46 bps (t 3.0) against -28 off
+   (difference t 2.7), and the gap holds across all 20 hedge/cost cells. But
+   in 2023-26 the on months make +10 (t 0.7), so it works as a filter, not as
+   a trade. The original scope follows. **Why high funding means a lower
+   premium** (§10.6, H6). Two cheap tests on
    data already on disk, both listed at the end of `HYPOTHESES.md`: split
    realised into up and down semivariance and see whether high-funding
    windows realise a lot of upside; and regress the z=-1 minus z=+1 skew on
