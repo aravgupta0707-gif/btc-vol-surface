@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 from surface.build import build_from_snapshot  # noqa: E402
 from surface.density import (  # noqa: E402
-    levels_around, nice_step, p_below, quantile, tail_report, total_mass,
+    levels_around, nice_step, p_below, smile_quantile, tail_report, total_mass,
 )
 from surface.surface import from_fits  # noqa: E402
 
@@ -82,7 +82,8 @@ def report_one(surface, stamp, T: float, asset: str = "BTC") -> None:
     print(f"\nwhere the market prices {asset} landing")
     for q, price in report["quantiles"].items():
         move = price / forward - 1
-        print(f"  {q:>5.0%}  {price:>10,.0f}   {move:+7.1%}")
+        flag = "extrapolated" if report["quantiles_extrapolated"][q] else ""
+        print(f"  {q:>5.0%}  {price:>10,.0f}   {move:+7.1%}   {flag}")
 
     print("\nprobability of finishing beyond a level")
     print(f"  {'level':>18} {'probability':>12}   {'':<12}")
@@ -133,9 +134,9 @@ def report_history(paths: list, asset: str, T: float, every: int) -> None:
             "forward": forward,
             "atm_iv": surface.iv(forward, T) * 100,
             "mass": total_mass(surface, T),
-            "q05": quantile(surface, 0.05, T),
-            "q50": quantile(surface, 0.50, T),
-            "q95": quantile(surface, 0.95, T),
+            "q05": smile_quantile(surface, 0.05, T)[0],
+            "q50": smile_quantile(surface, 0.50, T)[0],
+            "q95": smile_quantile(surface, 0.95, T)[0],
             "p_low": below_low * 100,
             "p_high": (1 - below_high) * 100,
             "extrapolated": low_x or high_x,

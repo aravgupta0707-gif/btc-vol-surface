@@ -236,6 +236,40 @@ def quantile(surface, probability: float, T: float, width: float = 4.0,
     ))
 
 
+def smile_quantile(surface, probability: float, T: float,
+                   points: int = 201) -> tuple[float, bool]:
+    """
+    The price below which the market puts `probability`, read from the smile
+    where possible, and whether it had to be extrapolated.
+
+    `quantile` inverts the integrated density, so like the old tail levels it
+    moves with every error anywhere on the k grid -- above all the clamped
+    wings, which is exactly where a 5% or 95% point sits closest to. This
+    inverts `digital_cdf` instead, inside the slice's quoted range only:
+    nothing outside that range can move the answer. If the probability is
+    not reached inside the range, the quantile lies in a clamped wing, and it
+    falls back to `quantile` and says so.
+    """
+    if not 0.0 < probability < 1.0:
+        raise ValueError("probability must be strictly between 0 and 1")
+    from scipy.optimize import brentq
+
+    forward = surface.forward(T)
+    info = surface.is_extrapolated(forward, T)
+    if info["beyond_fitted_maturities"]:
+        return quantile(surface, probability, T), True
+    lo, hi = info["supported_k_range"]
+    k = np.linspace(lo, hi, points)
+    p = np.array([digital_cdf(surface, forward * np.exp(x), T) for x in k])
+    above = np.nonzero(p >= probability)[0]
+    if len(above) == 0 or above[0] == 0:
+        return quantile(surface, probability, T), True
+    i = above[0]
+    root = brentq(lambda x: digital_cdf(surface, forward * np.exp(x), T) - probability,
+                  k[i - 1], k[i], xtol=1e-7)
+    return float(forward * np.exp(root)), False
+
+
 def total_mass(surface, T: float, width: float = 4.0, points: int = 4001) -> float:
     """
     How close the density integrates to one.
@@ -263,9 +297,14 @@ def tail_report(surface, T: float, levels: dict | None = None,
         "T": float(T),
         "forward": float(forward),
         "total_mass": total_mass(surface, T),
-        "quantiles": {q: quantile(surface, q, T) for q in quantiles},
+        "quantiles": {},
+        "quantiles_extrapolated": {},
         "levels": {},
     }
+    for q in quantiles:
+        price, extrapolated = smile_quantile(surface, q, T)
+        out["quantiles"][q] = price
+        out["quantiles_extrapolated"][q] = extrapolated
     for label, price in (levels or {}).items():
         info = surface.is_extrapolated(price, T)
         below, extrapolated = p_below(surface, price, T)

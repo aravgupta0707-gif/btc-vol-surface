@@ -419,8 +419,11 @@ the smile at that strike, so the wings cannot move it, and on 48 BTC surfaces
 its correlation with the density's total mass went from +0.29 to -0.06. A
 level *outside* the quoted strikes still comes from the integrated density
 over a clamped, lognormal wing, and is flagged "extrapolated" in both the
-monitor and the dashboard. Quantiles (5%, 95%) are still read from the
-integrated density, so they keep the old sensitivity to the wings.
+monitor and the dashboard. Quantiles get the same treatment
+(`smile_quantile`, 2026-11-15): on the 48 surfaces the sd of the 95% point's
+changes fell from 1.23 to 0.49 points of log-moneyness, and the 5% point's
+from 2.68 to 1.91. But on 35% of those surfaces the 5% point lies beyond the
+quoted puts at 90 days, so it is still integrated and flagged.
 
 **The cleaner is blind to the short end, and it has bitten twice.** The
 quote filters key on *relative* spread, which scales with premium size, so

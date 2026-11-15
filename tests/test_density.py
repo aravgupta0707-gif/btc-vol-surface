@@ -299,3 +299,44 @@ def test_rnd_monitor_history_levels_bracket_the_forward_on_both_assets():
     assert module.history_levels(80_000.0) == (60_000.0, 100_000.0)
     low, high = module.history_levels(1_835.0)
     assert 0 < low < 1_835 < high
+
+
+class TestSmileQuantile:
+    """`smile_quantile`: the inverse of `digital_cdf`, inside the quoted range."""
+
+    def test_inverts_the_digital(self):
+        from surface.density import digital_cdf, smile_quantile
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.6, 0.6)})
+        for p in (0.05, 0.25, 0.5, 0.75, 0.95):
+            price, flagged = smile_quantile(surface, p, 0.25)
+            assert not flagged
+            assert digital_cdf(surface, price, 0.25) == pytest.approx(p, abs=1e-6)
+
+    def test_flat_vol_is_the_lognormal_quantile(self):
+        from surface.density import smile_quantile
+
+        T, sigma = 0.25, 0.5
+        surface = VolSurface({T: {"a": sigma**2 * T, "b": 0.0, "rho": 0.0, "m": 0.0, "sigma": 0.1}},
+                             {T: FORWARD}, {T: (-1.5, 1.5)})
+        w = sigma**2 * T
+        price, _ = smile_quantile(surface, 0.05, T)
+        assert np.log(price / FORWARD) == pytest.approx(-w / 2 + np.sqrt(w) * norm.ppf(0.05), abs=1e-5)
+
+    def test_a_quantile_beyond_the_quoted_range_falls_back_and_is_flagged(self):
+        from surface.density import smile_quantile
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.05, 0.05)})
+        price, flagged = smile_quantile(surface, 0.05, 0.25)
+        assert flagged
+        assert price == pytest.approx(quantile(surface, 0.05, 0.25))
+
+    def test_moving_the_clamp_does_not_move_a_quantile_inside_both_ranges(self):
+        from surface.density import smile_quantile
+
+        narrow = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.5, 0.5)})
+        wide = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.9, 0.9)})
+        a, fa = smile_quantile(narrow, 0.25, 0.25)
+        b, fb = smile_quantile(wide, 0.25, 0.25)
+        assert not fa and not fb
+        assert a == pytest.approx(b, rel=1e-6)

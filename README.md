@@ -285,7 +285,7 @@ change already broke the trade once within the sample.
 | Write-up | **this file** | — |
 | Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**470 tests.** `python -m pytest`
+**474 tests.** `python -m pytest`
 
 ## Running it
 
