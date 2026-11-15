@@ -318,6 +318,17 @@ output is a refusal.
     (median 2, measured over 208). Past 500 it is refused, in 15 seconds,
     with a reason.
 
+15. **The two BTC books stay tied through a crash** (`INVERSE_LINEAR.md`,
+    pre-registered). Over 939 paired hours the inverse and linear books
+    agree to 0.13 vol points (median |diff|). BTC fell 87k -> 62k and
+    trailing realised vol peaked at 104%, and stress hours still showed 0.125.
+    The rv slope has t -0.05, and the per-quote 99th percentile is the same
+    0.96-0.97 in calm and stress. The put-side margin effect is there in
+    direction (-0.035 against -0.018) but t -0.84, about two hundredths of a
+    point. The 562 crossings have a $3 median depth and none survives
+    taker fees. The thin linear book quotes *tighter* in vol (0.78 against
+    1.06 points).
+
 ### Where I was wrong, caught by measurement
 
 Worth keeping because it is the honest half of the story.
@@ -580,8 +591,13 @@ better artifact than a 1-day table would have been.
    96-97% of 12h changes on both assets — level (5-7x larger at 7d than 90d),
    then skew, then a short-end term factor — identical across BTC and ETH.
    Rerun as Track A grows; half the possible pairs were lost to laptop
-   sleep. **Still runnable**: the inverse-vs-linear stress test (spin-off D)
-   on the USDC chains Track A has been banking.
+   sleep.
+
+7. **Inverse vs linear, done 2026-11-15 — `INVERSE_LINEAR.md`,
+   pre-registered.** The two books do not come apart under stress (finding
+   15). Predictions 2 and 4 failed, and that failure is the finding. The
+   project's cross-book check now holds across 939 hours rather than on one
+   snapshot.
 
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive
@@ -682,7 +698,7 @@ it uses data already banked. Cheapest real project on the list.
 collateral costs that funding does not — so the interesting output is the
 *shape* of the disagreement, not a mispricing claim.
 
-### D. Inverse vs linear vol spread — ~1-2 days
+### D. Inverse vs linear vol spread — **BUILT** (`INVERSE_LINEAR.md`, finding 15)
 
 **Question:** the two BTC books agree to 0.124 vol points in calm
 conditions. Does that hold under stress?

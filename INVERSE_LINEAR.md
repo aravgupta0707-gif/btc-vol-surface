@@ -74,6 +74,85 @@ is the finding. If 2 holds but 3 also holds, the widening is the thin book's
 quoting, not a pricing disagreement. Only 4 would show that settlement
 currency moves price.
 
-## Results
+## Results (2026-11-15)
 
-*(to be appended after running `scripts/inverse_linear.py`)*
+**The books held together.** BTC fell from 87k to 62k inside the window, and
+trailing 24h realised vol peaked at 104%. Through all of it the two books
+agreed to the same 0.13 vol points as on a calm day. Settlement currency did
+not move price.
+
+Data: 939 pairs, all matched, with 171,723 matched quotes (89% clean) and a
+median of 161 clean matches an hour. Trailing realised vol: median 27.9%,
+p90 53.1%, maximum 104.0%. That gives 372 calm hours and 75 stress hours.
+
+| clean set, median (vol pts) | calm | stress |
+|---|---|---|
+| \|linear - inverse\| | 0.130 | 0.125 |
+| signed, all | -0.009 | -0.012 |
+| signed, OTM puts | -0.018 | -0.035 |
+| signed, OTM calls | -0.002 | -0.004 |
+| linear vol-space width | 0.78 | 0.77 |
+| inverse vol-space width | 1.06 | 1.08 |
+| \|diff\|, all two-sided | 0.143 | 0.146 |
+
+Per quote, |diff| at the 50th / 90th / 99th percentile is 0.13 / 0.42 / 0.96
+in calm hours and 0.13 / 0.43 / 0.97 in stress. The whole distribution is
+the same, not just its middle.
+
+| | prediction | result | verdict |
+|---|---|---|---|
+| 1 | calm \|diff\| <= 0.25, signed within ±0.10 | 0.130 and -0.009 | **pass**; replicates the one-snapshot 0.124 over 372 hours |
+| 2 | stress >= 1.5x calm, rv slope t > 2 | 0.96x; slope -0.0000, t -0.05 | **fail**: no widening at all |
+| 3 | adding linear width halves the rv slope | nothing to halve; width itself t +3.63 | **moot**; the hour-to-hour variation that exists is quote width |
+| 4 | puts get richer on the inverse book in stress, t < -2; calls \|t\| < 2 | puts t -0.84, calls t +1.28 | **fail** on puts, pass on calls |
+| 5 | crossings < 1%, at least 2x as frequent in stress | 0.335%; stress 0.28% vs calm 0.35% | first half **pass**, second **fail** |
+| 6 | forward gap median within ±5 bps, max < 25 | median +0.00, max 7.55 | **pass** |
+
+The direction prediction 4 expected does show up in the stress medians.
+Inverse puts are 0.035 points richer in stress against 0.018 in calm, and in
+the -0.3 < k < -0.1 bucket the figures are 0.046 against 0.029. But that is
+about two hundredths of a vol point, far inside the books' own one-point
+quote widths, and the regression does not distinguish it from zero. If the
+margin effect exists, it is too small to measure here and too small to
+trade.
+
+### Checks run after the predictions (not pre-registered)
+
+- **Crossings are not arbitrage.** There are 562 crossed quotes in total,
+  with a median depth of $3.32 and a p90 of $10.64. After paying taker fees
+  on both legs (0.03% of the index each, capped at 12.5% of premium), *none
+  of them* survives. 46% sit in the far wings (|k| > 0.3), where both books
+  quote cheap options a tick or two wide.
+- **The wings behave like the middle.** Median |diff| by moneyness bucket,
+  calm then stress: k < -0.3: 0.18 / 0.18; -0.3 to -0.1: 0.12 / 0.12; ±0.1:
+  0.14 / 0.14; 0.1 to 0.3: 0.11 / 0.10; k > 0.3: 0.18 / 0.13.
+- **The worst hours look like any others.** The eight highest-rv hours, from
+  the 5-6 Nov drop and the 15 Nov low near 64.7k, have |diff| between 0.11
+  and 0.16.
+
+### What this says
+
+1. **One price, two collateral systems.** On Deribit's BTC options, the
+   currency of margin and settlement is not priced, even in a 28% drawdown
+   with realised vol above 100%. Prediction 4's mechanism, doubled exposure
+   for inverse put sellers, is real in principle. But nothing in these
+   quotes shows anyone charging for it. The likeliest reason: the same
+   market makers quote both books off one surface and hedge across them,
+   and the forwards agree to 0.00 bps at the median.
+2. **The "thin" book is not the noisy one.** The linear book turns over
+   about 1/200th of the inverse volume, yet its quotes are *tighter* in vol
+   terms (0.78 against 1.06 points). Daily volume measures who trades, not
+   who quotes. HANDOFF §8 named the thin book's microstructure as the main
+   risk to this study, and it did not materialise.
+3. **For this project, this is validation, not a trade.** The 0.124 cross
+   check in HANDOFF finding 8 now holds for 939 hours and through a
+   stress episode. The pipeline's conversion arithmetic is right on both
+   contract families, under all conditions seen so far.
+
+**Caveats.** The window has two or three stress episodes, not 75
+independent hours. Per-hour medians hide individual quotes, though the per-quote
+99th percentile does not move either. Mid against mid says nothing about
+size: the linear book may show the same price for far less depth. And
+the stress measure uses the index price, not the inverse front forward as the method
+section said. It switched because the front forward jumps at each expiry
+roll. The two differ by basis points, so the regimes are the same.

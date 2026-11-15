@@ -281,10 +281,11 @@ change already broke the trade once within the sample.
 | Costs + hedging rule | done | 128-cell sweep, walked forward |
 | Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
 | Surface factors | done | `surface_pca.py` — 3 factors, 96-97% of 12h changes |
+| Inverse vs linear | done | `inverse_linear.py` — books agree to 0.13 vol pts in calm and stress alike |
 | Write-up | **this file** | — |
 | Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**459 tests.** `python -m pytest`
+**467 tests.** `python -m pytest`
 
 ## Running it
 
