@@ -6,7 +6,11 @@ hedging-rule work landed (§12, §12.1, §12.2), and putting that rule on the
 live book turned up a marking bug that had been freezing its hedge (§10.5).
 Updated 2026-10-25 for the study of why the premium shrank (§10.6,
 `HYPOTHESES.md`), and 2026-11-14 for the two-month live-book rerun (§10.5)
-and the surface PCA (`SURFACE_PCA.md`).
+and the surface PCA (`SURFACE_PCA.md`). Updated 2026-11-15 for the
+dashboard, the funding mechanism (H7, H8), dispersion with real costs
+(`DISPERSION.md`), the smile-based density fix, inverse vs linear
+(`INVERSE_LINEAR.md`), the PCA rerun through the November sell-off, and the
+live-surface studies (`LIVE_STUDIES.md`).
 
 **The repository has a remote now**: `origin` is
 `github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
@@ -16,7 +20,9 @@ see §2 for what has to be moved separately.
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
 per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. `HYPOTHESES.md` is the pre-registered
 study of why the premium shrank, with its figures; `SURFACE_PCA.md` the same
-for how the live surface moves. This file is the
+for how the live surface moves; `DISPERSION.md`, `INVERSE_LINEAR.md` and
+`LIVE_STUDIES.md` the later pre-registered studies. `figures/overview/` is
+the whole project in seven charts (`scripts/make_overview.py`). This file is the
 state of play, what was learned, and what to do next.
 
 ---
@@ -24,7 +30,9 @@ state of play, what was learned, and what to do next.
 ## 1. State
 
 Every build-guide stage is complete, the dashboard last (2026-11-14).
-**443 tests, zero remaining stubs.**
+**505 tests, zero remaining stubs.** Line coverage (`pytest --cov`): the
+library (`pricing`, `surface`, `strategy`, `data/clean.py`, `dashboard`)
+92-100%; the study scripts lower, since much of them is report printing.
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -40,6 +48,11 @@ Every build-guide stage is complete, the dashboard last (2026-11-14).
 | Why the premium shrank | **done** | `HYPOTHESES.md` — pre-registered, H0-H6 |
 | Surface factors | **done** | `SURFACE_PCA.md` — 3 factors, 96-97% of 12h changes |
 | Dashboard | **done** | `streamlit run dashboard/app.py` — `tests/test_dashboard.py`, 13 |
+| Funding mechanism | **done** | `HYPOTHESES.md` H7, H8 — leverage realises downside; put filter mostly 2021-22 |
+| Dispersion with costs | **done** | `DISPERSION.md` — real gross, costs eat it (straddles and variance swaps) |
+| Inverse vs linear | **done** | `INVERSE_LINEAR.md` — 0.13 vol pts in calm and stress alike |
+| PCA through the sell-off | **done** | `SURFACE_PCA.md` rerun — 97-98% out of sample |
+| Live-surface studies | **done** | `LIVE_STUDIES.md` — spot-vol rules, H7b out of sample, skew as forecast |
 
 The statistical claim that §5 used to call open is now answered, and the
 answer is mostly negative: see §10. No build-guide stage remains open.
@@ -69,6 +82,12 @@ python scripts/vrp_hypotheses.py     # why the premium shrank (§10.6)  [~25 s]
 python scripts/make_figures.py premium  # its four figures, into figures/
 python scripts/surface_pca.py        # surface factors on Track A  [~5 min first run]
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
+python scripts/dispersion.py         # ETH/BTC straddle dispersion with costs
+python scripts/varswap.py            # the same with replicated variance swaps
+python scripts/inverse_linear.py     # inverse vs linear books [~25 min first run]
+python scripts/live_studies.py       # LIVE_STUDIES.md (needs surface_pca first)
+python scripts/make_overview.py      # figures/overview/, the project in 7 charts
+streamlit run dashboard/app.py       # the dashboard
 
 # operations
 python scripts/collector.py status   # hourly snapshots
@@ -398,7 +417,7 @@ does, and 70-90% of the in-sample level is reachable. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
-**Track A is not contiguous.** ~68 days of hourly snapshots with sleep
+**Track A is not contiguous.** ~70 days of hourly snapshots with sleep
 gaps. Long holds and anything needing an unbroken path are limited by it:
 every 7- and 30-day live position had an 11-54h hedging gap (§10.5), and the
 surface PCA lost about half its possible 12h pairs (`SURFACE_PCA.md`).

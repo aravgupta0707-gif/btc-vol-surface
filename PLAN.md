@@ -265,7 +265,12 @@ trusting any Sharpe number.
 - [x] Why the premium shrank — `HYPOTHESES.md`, pre-registered, six
       hypotheses plus a fear-vs-leverage follow-up
 - [x] Live book held to expiry on two months of Track A — HANDOFF §10.5
-- [x] Surface factor structure — `SURFACE_PCA.md`, pre-registered
+- [x] Surface factor structure — `SURFACE_PCA.md`, pre-registered; rerun
+      out of sample through the November sell-off
+- [x] Funding mechanism — `HYPOTHESES.md` H7, H8
+- [x] Dispersion with real costs — `DISPERSION.md`, straddles and variance swaps
+- [x] Inverse vs linear books under stress — `INVERSE_LINEAR.md`
+- [x] Spot-vol rules, H7b out of sample, skew as a forecast — `LIVE_STUDIES.md`
 
 ---
 

@@ -128,7 +128,10 @@ and dropped, plus 30d z = -1.5 on ETH. Over the sample BTC 30d ATM sat at
   is a different strike after spot moves. Under a sticky-strike smile that
   alone moves the fixed-z vol with spot, so the spot correlations above mix
   the market's own response with re-indexing along a skewed smile. Fixed-
-  strike changes would separate the two; not done.
+  strike changes would separate the two. **Measured since, in
+  `LIVE_STUDIES.md` A:** for ETH it is most of the effect (fixed-strike
+  corr -0.08 against -0.24 at fixed z), while BTC fixed-strike vol
+  genuinely rises with spot (t 2.85).
 - **Some of the short end is fitting noise.** The 7d slice is fitted
   through few surviving quotes, and its 12h moves are the largest on the
   grid. PC1's steep fall with tenor is far too large to be noise alone (5x),

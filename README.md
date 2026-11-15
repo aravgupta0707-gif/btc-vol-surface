@@ -129,7 +129,16 @@ BTC vol at equal vega) loses **−3.65 vol points a month, t −2.75**, so the
 reverse trade earns it; conditioned on the spread being narrow by its own
 expanding median — no lookahead — the loss widens to **−6.14, t −4.56**. That
 holds in both eras separately and in 6 of 7 years. Larger and more significant
-than anything in the straddle results, and the least examined thing here.
+than anything in the straddle results.
+
+**It is real, and it is not a trade.** `DISPERSION.md` builds it properly,
+pre-registered: equal-vega legs, real spreads, a no-lookahead entry rule.
+As straddles it earns +92.5 bps a month before costs (t 1.90), and the two
+legs' spreads and hedging cost 122. As replicated variance swaps, which
+strip out the path noise, the signal is clean (+4.6 vol points, t 2.89, legs
+correlated 0.89), and costs of 4.7 vol points still take all of it. The
+profit is the BTC short. Long ETH vol loses on its own, so "BTC vol is rich"
+describes it better than "ETH vol is cheap".
 
 **Why the premium shrank.** `HYPOTHESES.md` writes down six mechanisms and
 what each predicts before running anything (`vrp_hypotheses.py`, about 25 s),
@@ -156,12 +165,37 @@ then reports against them. On the 30-day DVOL premium, 1,977 days:
 
 **How the surface moves.** `SURFACE_PCA.md`, also written before running:
 PCA of 12-hour changes in the fitted live surface (tenor x standardised
-moneyness, ~50 changes per asset). Three factors explain 96-97%: a level
-shift that is 5-7x larger at 7 days than at 90, then skew, then a short-end
-term factor. BTC and ETH share all three (PC1 cosine 1.00). Skew moves with
-spot, call wing up when spot rises (corr +0.36 BTC, +0.64 ETH).
+moneyness, ~65 changes per asset). Three factors explain 96-98%: a level
+shift that is about 6x larger at 7 days than at 90, then skew, then a
+short-end term factor. BTC and ETH share all three (PC1 cosine 0.99). Skew
+moves with spot, call wing up when spot rises (corr +0.43 BTC, +0.52 ETH).
+Loadings fitted before the November sell-off explain 97-98% of its moves,
+so the factor model needs no refit for stress.
 
 ![PCA loadings of the BTC surface](figures/surface_pca.png)
+
+**Later studies, each pre-registered, failures included.**
+
+- **Why high funding means a lower premium** (`HYPOTHESES.md` H7, H8). After
+  high funding, realised vol comes on the *downside* (t -3.3), while the
+  surface bids the *call* wing (t -5.2). Options price the crowd's
+  direction, not its leverage. Selling puts only when funding is low earns
+  +46 bps against -28 (t 2.7), but almost all of it in 2021-22.
+- **Deribit's two BTC books** (`INVERSE_LINEAR.md`). The BTC-settled and
+  USDC-settled option books agree to 0.13 vol points over 939 hours, and
+  just as closely through the 87k -> 62k sell-off. Settlement currency is not
+  priced, and the pipeline's conversion arithmetic holds on both.
+- **Spot-vol and skew on the live surfaces** (`LIVE_STUDIES.md`). BTC vol at
+  a fixed strike rises *with* spot (t 2.85), while ETH is near sticky
+  strike. The funding/call-wing link replicates on ETH (t -4.1), not BTC.
+  Skew forecasts the downside share of the next week's realised variance.
+  On BTC, a 12h rise in put skew preceded a lower 12h return (t -4.1).
+  That was not predicted; it is a lead to re-test, not a finding.
+
+Every t-statistic from the studies on one axis, from
+`scripts/make_overview.py`:
+
+![How strong each finding is](figures/overview/6_evidence_scoreboard.png)
 
 ---
 
@@ -280,13 +314,15 @@ change already broke the trade once within the sample.
 | Strategy + backtest | done | 314 positions, six years |
 | Costs + hedging rule | done | 128-cell sweep, walked forward |
 | Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
+| Funding mechanism | done | `vrp_hypotheses.py` H7, H8 — leverage realises downside; put filter mostly 2021-22 |
+| Dispersion with costs | done | `dispersion.py`, `varswap.py` — real gross, costs eat it |
 | Surface factors | done | `surface_pca.py` — 3 factors, 96-97% of 12h changes; 97-98% out of sample through the Nov sell-off |
 | Inverse vs linear | done | `inverse_linear.py` — books agree to 0.13 vol pts in calm and stress alike |
 | Live-surface studies | done | `live_studies.py` — BTC vol rises with spot, ETH sticky strike; skew forecasts downside share |
 | Write-up | **this file** | — |
 | Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**505 tests.** `python -m pytest`
+**505 tests.** `python -m pytest` (add `--cov=pricing --cov=surface --cov=strategy` for coverage; the library is 92-100%)
 
 ## Running it
 
@@ -309,6 +345,11 @@ python scripts/make_figures.py       # regenerate every figure above
 python scripts/make_figures.py premium   # premium figures only, no live chain needed
 python scripts/surface_pca.py        # surface factors on the live chains [~5 min first run]
 python scripts/make_figures.py pca       # its loadings figure
+python scripts/dispersion.py         # ETH/BTC dispersion with costs
+python scripts/varswap.py            # the same with replicated variance swaps
+python scripts/inverse_linear.py     # inverse vs linear books [~25 min first run]
+python scripts/live_studies.py       # LIVE_STUDIES.md (after surface_pca)
+python scripts/make_overview.py      # figures/overview/: the project in 7 charts
 
 streamlit run dashboard/app.py       # the dashboard (VOL_DATA_ROOT=<path to data/> to point it elsewhere)
 ```

@@ -411,6 +411,11 @@ Known issues, stated up front:
 Run: `python scripts/vrp_hypotheses.py H7` (also part of the full run). The
 predictions above were committed (`662d274`) before this code existed.
 
+**Out of sample (2026-11-15, `LIVE_STUDIES.md` B):** on the 99 live
+surfaces since September, 7b replicates on ETH (-0.81 vol pts per point of
+7-day funding, t -4.1) and not on BTC (+0.18, t +0.6). It is not a stable
+BTC property.
+
 **Verdict: 7a contradicted, 7b and 7c supported.** Funding is real
 information that implied under-uses, and the realised vol it predicts is on
 the **downside**, while the options market is bidding the **upside**.
