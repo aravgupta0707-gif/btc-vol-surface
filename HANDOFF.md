@@ -402,14 +402,14 @@ hedging and cost logic; it is not a precision measurement.
 range it returns the boundary value. Honest, but it means far-wing queries
 are flat rather than smooth. A desk would fit a wing model instead.
 
-**The RND monitor's tail probabilities move with its own integration
-error.** Across 32 Track A surfaces, P(below 60k) correlates **+0.85** with
-the density's total mass, and removing that effect halves its hour-to-hour
-spread (sd 1.78 -> 0.93). The largest 4-hour jump, 5.3% -> 10.3%, happened
-with the forward moving 0.5% and ATM vol 0.2 points. A level inside the
-quoted strikes is still marked "not extrapolated" even though its
-probability integrates over the unquoted left wing. Also, the ETH report
-lists a "below 0" level and says "BTC" in a heading.
+**The RND monitor's deep tails are still an assumption.** The integration
+leak is fixed (§7 step 4): a level inside the quoted strikes is now read from
+the smile at that strike, so the wings cannot move it, and on 48 BTC surfaces
+its correlation with the density's total mass went from +0.29 to -0.06. A
+level *outside* the quoted strikes still comes from the integrated density
+over a clamped, lognormal wing, and is flagged "extrapolated" in both the
+monitor and the dashboard. Quantiles (5%, 95%) are still read from the
+integrated density, so they keep the old sensitivity to the wings.
 
 **The cleaner is blind to the short end, and it has bitten twice.** The
 quote filters key on *relative* spread, which scales with premium size, so
@@ -528,7 +528,7 @@ better artifact than a 1-day table would have been.
    backtest tab reproduces §12's cell exactly (Sharpe 0.63, max DD −624 bps).
    `VOL_DATA_ROOT` points it at another `data/` (e.g. from a worktree). It
    also fixed the "below 0" level: levels now step by a round tenth of the
-   forward; `scripts/rnd_monitor.py` still has the old fixed step.
+   forward, shared with `scripts/rnd_monitor.py`.
 
 3. **Dispersion, done 2026-11-14 — `DISPERSION.md`, pre-registered, two
    parts.** Straddles: gross +92.5 bps (t 1.90), costs 122 bps, net
@@ -556,8 +556,10 @@ better artifact than a 1-day table would have been.
    mass went from +0.29 to -0.06, and the change between samples fell from
    2.73 to 1.64 points (sd), with the same mean (7.9-8.0%). The dashboard's
    levels step by a round tenth of the forward, which removes "below 0".
-   Still open: `rnd_monitor.py`'s fixed step and the "BTC" heading in its ETH
-   report.
+   `rnd_monitor.py` now shares those helpers (`surface.density.levels_around`,
+   `p_below`), names the asset it reports on, and its `--history` levels are
+   two steps either side of the first forward (60k/100k on BTC, 2.2k/3k on
+   ETH) instead of hard-coded BTC prices.
 
 5. **Funding mechanism, done 2026-11-14 — `HYPOTHESES.md` H7, H8.** High
    funding is followed by *downside* realised vol (difference t -3.3), while

@@ -156,29 +156,7 @@ def density_curve(surface, T: float, width: float = 4.0, points: int = 801) -> p
     return pd.DataFrame({"k": k, "price": price, "pdf": pdf_price, "cdf": cdf})
 
 
-def nice_step(forward: float) -> float:
-    """A round 1-2-5 step of about a tenth of the forward, so levels read like a market."""
-    raw = forward / 10.0
-    mag = 10.0 ** np.floor(np.log10(raw))
-    return float(min((m * mag for m in (1, 2, 5, 10)), key=lambda c: abs(np.log(c / raw))))
-
-
-def levels_around(forward: float) -> dict:
-    """
-    Three round levels either side of the forward.
-
-    The RND monitor used a fixed 10k/1k step, which on ETH produced a
-    "below 0" level (HANDOFF §5). A step scaled to the forward cannot.
-    """
-    step = nice_step(forward)
-    base = round(forward / step) * step
-    out = {}
-    for n in (3, 2, 1):
-        if base - n * step > 0:
-            out[f"below {base - n * step:,.0f}"] = base - n * step
-    for n in (1, 2, 3):
-        out[f"above {base + n * step:,.0f}"] = base + n * step
-    return out
+from surface.density import levels_around, nice_step  # noqa: E402,F401  (shared with rnd_monitor)
 
 
 def tail_table(surface, T: float) -> tuple[pd.DataFrame, dict]:

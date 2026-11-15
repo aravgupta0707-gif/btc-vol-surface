@@ -170,6 +170,51 @@ def digital_cdf(surface, price: float, T: float) -> float:
     return float(np.clip(norm.cdf(-d2) + norm.pdf(d2) * w1 / (2 * sqrt_w), 0.0, 1.0))
 
 
+def p_below(surface, price: float, T: float) -> tuple[float, bool]:
+    """
+    P(S_T <= price) by the most trustworthy route, and whether it is
+    extrapolated.
+
+    Inside the quoted range the digital reads the smile at the level only, so
+    the wings cannot move it. Outside, there is no smile to read, so fall back
+    to the integrated density -- which is then lognormal by assumption -- and
+    say so.
+    """
+    info = surface.is_extrapolated(price, T)
+    extrapolated = bool(info["outside_supported_range"] or info["beyond_fitted_maturities"])
+    below = cdf(surface, price, T) if extrapolated else digital_cdf(surface, price, T)
+    return below, extrapolated
+
+
+def nice_step(forward: float) -> float:
+    """A round 1-2-5 step of about a tenth of the forward, so levels read like a market."""
+    raw = forward / 10.0
+    mag = 10.0 ** np.floor(np.log10(raw))
+    return float(min((m * mag for m in (1, 2, 5, 10)), key=lambda c: abs(np.log(c / raw))))
+
+
+def levels_around(forward: float) -> dict:
+    """
+    Three round levels either side of the forward, labelled "below X" /
+    "above X". The step scales with the forward, so an ETH chain cannot get
+    the "below 0" level a fixed 10k/1k step once gave it.
+    """
+    step = nice_step(forward)
+    base = round(forward / step) * step
+    # Enough decimals to tell neighbouring levels apart: none for a 10k step,
+    # one for a 0.5 step. Rounding coarser than the step collides the labels.
+    places = max(0, -int(np.floor(np.log10(step))))
+    out = {}
+    for n in (3, 2, 1):
+        level = round(base - n * step, places)
+        if level > 0:
+            out[f"below {level:,.{places}f}"] = level
+    for n in (1, 2, 3):
+        level = round(base + n * step, places)
+        out[f"above {level:,.{places}f}"] = level
+    return out
+
+
 def probability_between(surface, low: float, high: float, T: float,
                         **kwargs) -> float:
     """P(low < S_T <= high)."""
@@ -223,18 +268,12 @@ def tail_report(surface, T: float, levels: dict | None = None,
     }
     for label, price in (levels or {}).items():
         info = surface.is_extrapolated(price, T)
-        # The digital reads the smile at the level only, so a level inside
-        # the quoted range cannot be moved by the wings; outside it, fall
-        # back to the integrated density and flag it as extrapolated.
-        inside = not (info["outside_supported_range"] or info["beyond_fitted_maturities"])
-        below = digital_cdf(surface, price, T) if inside else cdf(surface, price, T)
+        below, extrapolated = p_below(surface, price, T)
         out["levels"][label] = {
             "price": float(price),
             "p_below": below,
             "p_above": 1.0 - below,
             "k": info["k"],
-            "extrapolated": bool(
-                info["outside_supported_range"] or info["beyond_fitted_maturities"]
-            ),
+            "extrapolated": extrapolated,
         }
     return out

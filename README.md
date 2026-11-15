@@ -1,4 +1,4 @@
-# BTC Implied Volatility Surface + Vol Strategy
+﻿# BTC Implied Volatility Surface + Vol Strategy
 
 An arbitrage-free implied volatility surface built from live Deribit options
 data, and a delta-hedged short-straddle strategy backtested on top of it over
@@ -284,7 +284,7 @@ change already broke the trade once within the sample.
 | Write-up | **this file** | — |
 | Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**443 tests.** `python -m pytest`
+**459 tests.** `python -m pytest`
 
 ## Running it
 

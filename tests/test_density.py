@@ -256,3 +256,46 @@ class TestDigitalCdf:
         level = FORWARD * np.exp(-0.1495)
         assert digital_cdf(clamped, level, 0.25) == pytest.approx(
             digital_cdf(free, level, 0.25), abs=2e-3)
+
+
+class TestLevels:
+    """The shared level helpers used by the dashboard and `rnd_monitor`."""
+
+    def test_step_is_a_round_tenth_of_the_forward_for_any_asset(self):
+        from surface.density import nice_step
+
+        assert nice_step(80_000.0) == 10_000
+        assert nice_step(1_835.0) == 200
+        assert nice_step(3.7) == 0.5
+
+    def test_no_level_is_zero_or_negative(self):
+        from surface.density import levels_around
+
+        for forward in (80_000.0, 1_835.0, 26.0, 0.9):
+            assert all(price > 0 for price in levels_around(forward).values())
+            # Six distinct labels: a label rounded coarser than the step would collide.
+            assert len([k for k in levels_around(forward) if k.startswith("above")]) == 3
+
+    def test_p_below_reads_the_smile_inside_and_flags_outside(self):
+        from surface.density import digital_cdf, p_below
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.30, 0.30)})
+        inside, flagged = p_below(surface, 75_000.0, 0.25)
+        assert not flagged
+        assert inside == digital_cdf(surface, 75_000.0, 0.25)
+        far, flagged = p_below(surface, 5_000.0, 0.25)
+        assert flagged
+        assert far == cdf(surface, 5_000.0, 0.25)
+
+
+def test_rnd_monitor_history_levels_bracket_the_forward_on_both_assets():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "rnd_monitor.py"
+    spec = importlib.util.spec_from_file_location("rnd_monitor", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.history_levels(80_000.0) == (60_000.0, 100_000.0)
+    low, high = module.history_levels(1_835.0)
+    assert 0 < low < 1_835 < high
