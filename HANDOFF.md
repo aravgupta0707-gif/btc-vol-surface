@@ -591,7 +591,12 @@ better artifact than a 1-day table would have been.
    96-97% of 12h changes on both assets — level (5-7x larger at 7d than 90d),
    then skew, then a short-end term factor — identical across BTC and ETH.
    Rerun as Track A grows; half the possible pairs were lost to laptop
-   sleep.
+   sleep. **Rerun 2026-11-15 through the sell-off** (pre-registered, R1-R5
+   in `SURFACE_PCA.md`): loadings fitted before 5 Nov capture 97-98% of the
+   crash's 12h moves. BTC's level factor moved 5.5x its quiet variance, and
+   the level/spot correlation turned negative in the sell-off (-0.44,
+   -0.51). The BTC +0.32 was that regime. The factor model needs no refit
+   for stress.
 
 7. **Inverse vs linear, done 2026-11-15 — `INVERSE_LINEAR.md`,
    pre-registered.** The two books do not come apart under stress (finding
