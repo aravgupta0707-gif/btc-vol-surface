@@ -49,7 +49,7 @@ def save(fig, name: str) -> Path:
     path = OUT / f"{name}.png"
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print("wrote", path.relative_to(ROOT))
+    print("wrote", path.relative_to(ROOT) if path.is_relative_to(ROOT) else path)
     return path
 
 
