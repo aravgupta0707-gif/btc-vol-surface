@@ -429,6 +429,140 @@ def test_h6(panel: pd.DataFrame, funding: pd.Series, dd: pd.Series,
     print("  (lag-1 Newey-West: monthly 30-day windows barely overlap)")
 
 
+def forward_semivariance(asset: str) -> pd.DataFrame:
+    """
+    Forward 30-day upside and downside realised vol, and the upside share (H7a).
+
+    Each side is sqrt(2 * RS_side * 8760 / hours) * 100, so either equals
+    ordinary realised vol when returns are symmetric. Same windows and the
+    same 95%-coverage rule as `build_panel`.
+    """
+    r = hourly_returns(asset)
+    day = r.index.tz_convert("UTC").tz_localize(None).floor("D")
+    frame = pd.DataFrame({"up": (r.clip(lower=0) ** 2).to_numpy(),
+                          "dn": (r.clip(upper=0) ** 2).to_numpy(), "n": 1.0}, index=day)
+    daily = frame.groupby(level=0).sum()
+    daily = daily.reindex(pd.date_range(daily.index.min(), daily.index.max(), freq="D")).fillna(0.0)
+    fwd = daily.rolling(HORIZON).sum().shift(-HORIZON)
+    ok = fwd["n"] >= 0.95 * HORIZON * 24
+    scale = HOURS_Y / fwd["n"].where(ok)
+    out = pd.DataFrame({
+        "up_vol": np.sqrt(2 * fwd["up"] * scale) * 100,
+        "down_vol": np.sqrt(2 * fwd["dn"] * scale) * 100,
+        "up_share": fwd["up"] / (fwd["up"] + fwd["dn"]),
+        "fwd_return": np.nan,
+    })
+    candles = pd.read_parquet(CACHE / f"{asset.lower()}_perp_hourly.parquet")
+    close = candles.set_index(pd.to_datetime(candles["time"]))["close"]
+    close.index = close.index.tz_convert("UTC").tz_localize(None)
+    eod = close.resample("D").last()
+    out["fwd_return"] = (np.log(eod.shift(-HORIZON) / eod) * 100).reindex(out.index)
+    return out.dropna()
+
+
+def test_h7(panel: pd.DataFrame, funding: pd.Series, semi: pd.DataFrame,
+            skew: pd.DataFrame) -> None:
+    header("H7  Why high funding goes with a lower premium")
+    frame = panel.join([funding, semi], how="inner").dropna()
+    year = frame.index.year
+
+    def within(df):
+        return df - df.groupby(year).transform("mean")
+
+    def row(label, y, cols, w=False, lags=LAGS, data=None):
+        data = frame if data is None else data
+        yy, X = data[y], data[cols]
+        if w:
+            yy, X = within(yy), within(X)
+        beta, ts = nw_ols_multi(yy, X, lags)
+        cells = "  ".join(f"{c} {b:+.4f} (t {t:+.1f})" for c, b, t in zip(cols, beta, ts))
+        print(f"  {label:<38} {cells}")
+        return beta, ts
+
+    print(f"  Daily sample n={len(frame)} ({frame.index[0]:%Y-%m} to {frame.index[-1]:%Y-%m}). "
+          f"Mean upside vol {frame['up_vol'].mean():.1f}, downside {frame['down_vol'].mean():.1f}, "
+          f"upside share {frame['up_share'].mean():.3f}")
+    print(f"  corr(funding, forward 30d return) {frame['funding30'].corr(frame['fwd_return']):+.2f}")
+    print()
+
+    print("  Identity check: premium and realised on funding + DVOL (slopes must be negatives)")
+    row("premium ~ fund + DVOL", "premium", ["funding30", "dvol"])
+    row("realised ~ fund + DVOL", "realized", ["funding30", "dvol"])
+
+    print()
+    print("  (7a) Which side of realised does funding predict?")
+    up = row("upside vol ~ fund + DVOL", "up_vol", ["funding30", "dvol"])
+    dn = row("downside vol ~ fund + DVOL", "down_vol", ["funding30", "dvol"])
+    row("upside vol ~ fund + DVOL, within year", "up_vol", ["funding30", "dvol"], w=True)
+    row("downside vol ~ fund + DVOL, within year", "down_vol", ["funding30", "dvol"], w=True)
+    share = row("upside share ~ fund + DVOL", "up_share", ["funding30", "dvol"])
+    row("upside share ~ fund + DVOL, within year", "up_share", ["funding30", "dvol"], w=True)
+    frame = frame.assign(up_minus_down=frame["up_vol"] - frame["down_vol"])
+    diff = row("upside - downside vol ~ fund + DVOL", "up_minus_down", ["funding30", "dvol"])
+    sparse = frame.iloc[::HORIZON]
+    row(f"same, non-overlapping (n={len(sparse)})", "up_minus_down", ["funding30", "dvol"],
+        lags=1, data=sparse)
+    print(f"  -> 7a.1 upside slope {up[0][0]:+.3f} (t {up[1][0]:+.1f}) vs downside "
+          f"{dn[0][0]:+.3f} (t {dn[1][0]:+.1f}); difference t {diff[1][0]:+.1f}")
+    print(f"  -> 7a.2 upside share slope {share[0][0]:+.5f} (t {share[1][0]:+.1f})")
+
+    print()
+    print("  (7c) Does funding survive trailing realised?")
+    base = row("premium ~ fund + DVOL", "premium", ["funding30", "dvol"])
+    full = row("premium ~ fund + DVOL + trailing RV", "premium", ["funding30", "dvol", "trailing_rv"])
+    row("same, within year", "premium", ["funding30", "dvol", "trailing_rv"], w=True)
+    row(f"same, non-overlapping (n={len(sparse)})", "premium",
+        ["funding30", "dvol", "trailing_rv"], lags=1, data=sparse)
+    kept = full[0][0] / base[0][0]
+    print(f"  -> funding keeps {kept:.0%} of its slope with trailing realised in "
+          f"(t {full[1][0]:+.1f})")
+    print(f"     corr(funding, trailing RV) {frame['funding30'].corr(frame['trailing_rv']):+.2f}")
+
+    m = skew.join(funding, how="inner").dropna()
+    print()
+    print(f"  (7b) 30d skew (z=-1 minus z=+1) on funding, monthly archive days n={len(m)}")
+    print(f"       corr(skew, funding) {m['skew'].corr(m['funding30']):+.2f}")
+    row("skew ~ fund", "skew", ["funding30"], lags=1, data=m)
+    row("skew ~ fund + ATM iv", "skew", ["funding30", "atm_iv"], lags=1, data=m)
+
+
+def test_h8(funding: pd.Series) -> None:
+    """Sell BTC 30d puts only when funding is below its expanding median."""
+    header("H8  Funding-conditioned put selling, with costs and no lookahead")
+    from scipy.stats import ttest_ind
+
+    cells = pd.read_parquet(CACHE / "hedge_cells" / "cells_all.parquet")
+    cells = cells[(cells["skipped"] == "") & cells["supported"].astype(bool)
+                  & (cells["asset"] == "BTC") & (cells["tenor"] == 30)
+                  & (cells["policy"] == "time 4h") & (cells["slip_bps"] == 5.0)]
+    cells = cells.assign(date=pd.to_datetime(cells["date"]))
+    # Inceptions are at 00:00 UTC; funding30 on date d includes all of day d,
+    # so the value known at entry is the previous day's.
+    known = funding.shift(1)
+    print("  BTC 30d, short one option at z, 4h clock, 5 bps; bps of spot per inception")
+    print(f"  {'z':>5} {'rule ON':>22} {'rule OFF':>22} {'every month':>22} {'on-off t':>9}")
+    for z in (-1.5, -1.0, -0.5, 0.0):
+        c = cells[cells["z"] == z].set_index("date").sort_index()
+        f = known.reindex(c.index)
+        threshold = f.expanding(min_periods=6).median().shift(1)
+        decided = threshold.notna() & f.notna()
+        on = c.loc[decided & (f < threshold), "net_bps"]
+        off = c.loc[decided & (f >= threshold), "net_bps"]
+
+        def cell(x):
+            t = x.mean() / (x.std(ddof=1) / np.sqrt(len(x))) if len(x) > 1 else np.nan
+            return f"{x.mean():+7.1f} (t {t:+5.2f}) n={len(x):<3d}"
+
+        diff_t = ttest_ind(on, off, equal_var=False).statistic
+        print(f"  {z:+5.1f} {cell(on):>22} {cell(off):>22} {cell(c['net_bps']):>22} {diff_t:+9.2f}")
+        if z == -1.0:
+            share_on = (on / c.loc[on.index, "premium_bps"]).mean()
+            share_off = (off / c.loc[off.index, "premium_bps"]).mean()
+            print(f"        net as share of premium: on {share_on:+.0%}, off {share_off:+.0%}; "
+                  f"mean costs {c['spread_bps'].mean() + c['slippage_bps'].mean():.1f} bps")
+    print("  (Welch t for on minus off; expanding median of earlier inceptions' funding, min 6)")
+
+
 def test_h3(panel: pd.DataFrame) -> None:
     header("H3  Is the premium jump compensation?")
     print("  Variances in annualised vol^2 points; 'vol' columns are sqrt of the mean.\n")
@@ -645,6 +779,12 @@ def main() -> int:
     fetch = "--fetch" in sys.argv
     btc_dvol = fetch_dvol("BTC", fetch)
     btc = build_panel("BTC", btc_dvol)
+    if "H8" in sys.argv:
+        test_h8(trailing_funding("BTC"))
+        return 0
+    if "H7" in sys.argv:
+        test_h7(btc, trailing_funding("BTC"), forward_semivariance("BTC"), surface_skew("BTC"))
+        return 0
     eth = build_panel("ETH", fetch_dvol("ETH", fetch))
 
     baseline(btc)
@@ -656,6 +796,8 @@ def main() -> int:
     test_h5_openinterest(btc, eth)
     test_posthoc(btc, btc_dvol)
     test_h6(btc, trailing_funding("BTC"), trailing_drawdown("BTC"), surface_skew("BTC"))
+    test_h7(btc, trailing_funding("BTC"), forward_semivariance("BTC"), surface_skew("BTC"))
+    test_h8(trailing_funding("BTC"))
 
     btc.to_parquet(CACHE / "vrp_hypotheses_btc.parquet")
     return 0

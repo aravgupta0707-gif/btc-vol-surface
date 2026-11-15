@@ -338,3 +338,215 @@ how cheap they are to check here:
 - *Call-side bidding.* If leverage demand bids calls (H2's original idea), it
   would raise the call wing, i.e. *lower* the z=-1 minus z=+1 skew. Regress
   skew on funding on the 64 monthly days.
+
+---
+
+## H7. Why does high funding go with a lower premium? Written before testing
+
+H6 left one robust, unexplained result: with the vol level controlled, higher
+30-day perp funding predicts a *lower* 30-day DVOL premium (-0.54 per funding
+point, t -2.5, and stronger with drawdown in). This section tests the two
+cheap explanations listed above, plus one that the algebra forces.
+
+A point of arithmetic first, because it shapes the tests. The premium is
+`DVOL - realised`. In a regression of the premium on funding *and DVOL*, the
+funding slope is exactly minus the funding slope in the same regression of
+realised. So the H6 result says nothing about implied: it says **funding
+predicts higher forward realised vol than DVOL's level alone does**. The
+question is what kind of realised.
+
+Data: the same daily panel (1,977 days), hourly perp closes split by the sign
+of each hourly return, and the 64 monthly archive days of fitted 30-day skew.
+
+**H7a. Upside realised.** High funding marks rallies, and fast rallies realise
+variance on the upside. Split forward realised variance into up and down
+semivariance (`RS+ = sum r^2 for r > 0`, `RS-` likewise), each expressed as an
+annualised vol, `sqrt(2 * RS± * 8760 / hours) * 100`, so each equals realised
+vol when returns are symmetric.
+
+- *Predicts:*
+  1. With DVOL controlled, funding's slope on forward **upside** vol is
+     positive with NW t > 2, and larger than its slope on downside vol.
+  2. The upside share of realised variance, `RS+ / RV`, rises with funding
+     (positive slope, t > 2).
+- *Against:* funding predicts upside and downside vol about equally (then it
+  is a general vol forecast that implied under-uses, see H7c), or predicts
+  downside more.
+
+**H7b. Call-side bidding.** If leveraged demand bids calls, the call wing is
+richer when funding is high, so the z=-1 minus z=+1 skew is *lower*.
+
+- *Predicts:* negative slope of 30-day skew on 30-day funding, with ATM
+  implied controlled, on the monthly archive days.
+- *Against:* zero or positive slope.
+- Power is low (n about 64, lag-1 NW). |t| under 2 with the right sign is
+  "not supported", not "disproved".
+
+**H7c. Funding is information implied does not use.** Trailing realised vol
+is the obvious public forecast of forward realised. If funding only proxies
+for recent realised (high funding follows volatile rallies), its effect should
+vanish once trailing realised is controlled.
+
+- *Predicts (the "implied under-uses funding" reading):* with DVOL **and**
+  trailing 30-day realised in the regression, funding's slope on the premium
+  keeps at least half its size and NW |t| > 2.
+- *Against:* the slope falls by more than half or loses significance; then
+  funding was standing in for trailing realised, and the finding is that
+  implied under-reacts to recent realised, not to leverage.
+
+Known issues, stated up front:
+
+- Semivariance from hourly returns is noisy and the upside share is a ratio
+  of noisy things; 30-day overlap makes daily observations far from
+  independent (lag-30 NW throughout, as in H2-H6).
+- Funding and returns are mechanically linked: funding is high *because*
+  price has risen. H7a can show that high-funding windows realise upside; it
+  cannot show the direction of causation.
+- This is another batch of tests on top of about 70. The bar for calling
+  something found is the same as before: the prediction's sign and |t| > 2,
+  plus survival within year.
+
+## H7 results
+
+Run: `python scripts/vrp_hypotheses.py H7` (also part of the full run). The
+predictions above were committed (`662d274`) before this code existed.
+
+**Out of sample (2026-11-15, `LIVE_STUDIES.md` B):** on the 99 live
+surfaces since September, 7b replicates on ETH (-0.81 vol pts per point of
+7-day funding, t -4.1) and not on BTC (+0.18, t +0.6). It is not a stable
+BTC property.
+
+**Verdict: 7a contradicted, 7b and 7c supported.** Funding is real
+information that implied under-uses, and the realised vol it predicts is on
+the **downside**, while the options market is bidding the **upside**.
+
+| | Prediction | Result |
+|---|---|---|
+| identity | premium slope = minus realised slope | -0.542 and +0.542, exact |
+| 7a.1 | funding predicts upside vol more than downside | **Reversed.** Upside +0.38 (t 2.1), downside **+0.70 (t 2.8)**; difference t -3.3, non-overlapping t -3.1 (n=66). Within year: +0.48 vs +0.89 |
+| 7a.2 | upside share of realised rises with funding | **Falls**: -0.21 percentage points per funding point, t -4.0; within year t -4.9 |
+| 7b | skew falls with funding (call wing bid) | **Yes**: -0.29 vol pts per funding point (t -3.9), **-0.34 (t -5.2)** with ATM iv controlled; corr -0.53, n=74 |
+| 7c | funding survives trailing realised | **Yes**: keeps 109% of its slope (-0.59, t -2.7); within year -0.77 (t -3.6); non-overlapping -0.63 (t -2.1). corr(funding, trailing RV) -0.05 |
+
+What the numbers say:
+
+- **High funding is followed by downside vol, not upside.** The obvious story
+  — leverage marks rallies, rallies realise variance — has the sign wrong.
+  What follows high funding is disproportionately *down*-move variance, and
+  the forward 30-day return is negatively correlated with funding (-0.19).
+  That is what a deleveraging or liquidation cascade looks like from the
+  return series: crowded longs unwind into the downside.
+- **The options market prices the crowd's direction, not its leverage.**
+  When funding is high the call wing richens relative to puts (7b, |t| 5).
+  So at exactly the times the subsequent realised vol is skewed down, the
+  surface is skewed *up*. Implied ends up below what realises, and the
+  premium shrinks — the H6 result, now with a mechanism.
+- **It is not recent volatility in disguise.** Funding is uncorrelated with
+  trailing realised (-0.05) and its slope does not shrink when trailing
+  realised is added (7c). Trailing realised has its own, separate effect
+  (higher recent realised, lower premium for a given DVOL), which is ordinary
+  implied under-reaction to realised.
+
+**Post hoc, not pre-registered:** if the mechanism is right, the put wing
+should be where the premium disappears when funding is high. On the 30-day
+monthly archive (`vrp_surface.parquet`, mid prices, delta-hedged every 4h),
+the seller's hedged P&L as a share of premium, split at median funding:
+
+| z | -2.0 | -1.5 | -1.0 | -0.5 | 0 | +0.5 | +1.0 | +1.5 |
+|---|---|---|---|---|---|---|---|---|
+| high funding | +2% | +2% | +1% | +4% | +5% | +9% | +20% | +50% |
+| low funding | +36% | +34% | +29% | +20% | +13% | +26% | +47% | +58% |
+| funding slope t (with ATM iv) | -1.4 | -1.7 | -2.0 | -2.6 | -2.7 | -1.9 | -1.8 | -0.5 |
+
+Put-wing premium is roughly a third of what is sold when funding is low and
+roughly zero when it is high; the call wing keeps a premium either way. The
+7-day tenor shows nothing (n 20-44, and noisy). This is one split on n≈75,
+at mid with no spread, looked at after seeing 7a — a lead, not a finding.
+
+What this changes: the summary becomes **"the premium scales with the vol
+level, and is lower when perp funding is high because leverage is followed
+by downside realised vol that a call-bid surface does not price."** The
+trade it suggests — stop selling (or buy) the put wing when funding is high —
+is the one to test properly next, with spreads, on the live book as well as
+the archive.
+
+---
+
+## H8. Sell the put wing only when funding is low? Written before testing
+
+H7's post-hoc split suggested the 30-day put-wing premium is about a third of
+what is sold when funding is low and about zero when it is high. That was at
+mid, with no spread, split at the full-sample median — so it used the future
+twice. This states a tradeable version before running it.
+
+**The trade.** At each monthly archive inception, sell one BTC 30-day put at
+z = -1 (about a 0.16-delta put), delta-hedged on a 4-hour clock with 5 bps
+slippage, entry spread measured from the archive's book: exactly the
+`hedge_frequency` cell (`tenor 30, z -1.0, time 4h, 5 bps`). Trade only when
+30-day trailing perp funding at entry is **below the median of funding on
+all earlier inception days** (expanding, at least 6), so the threshold uses
+nothing unknown at entry.
+
+**Predictions.**
+1. Rule-on months: mean net bps of spot positive with t > 2.
+2. Rule-on minus rule-off: positive, Welch t > 2.
+3. Same sign of (2) at z = -1.5 and z = -0.5 (neighbouring strikes, same
+   rule, same costs).
+4. The ATM straddle (z = 0) shows the same direction, weaker — H6 found the
+   effect on the ATM premium too.
+
+**What counts against:** rule-on net t < 2, or the on/off difference
+vanishing once costs and the expanding threshold are applied. Then H7's split
+was a mid-price, hindsight artefact.
+
+**This is not an independent test.** The lead came from the same 30-day
+monthly archive days, priced by a near-identical hedge simulation. What this
+adds is costs and a threshold without lookahead, nothing more; an
+out-of-sample test needs data this project does not have (Track A is two
+months). A pass here is "survives costs and an honest threshold", not
+"confirmed". Samples are about 76 months, roughly half on.
+
+## H8 results
+
+Run: `python scripts/vrp_hypotheses.py H8`. Predictions committed in
+`694570f` before the code existed. Funding is lagged one day: the 30-day
+trailing value on date d includes all of day d, and inceptions are at 00:00.
+
+**Verdict: all four predictions pass — and the pass is mostly 2021-22.**
+
+| z | rule ON (low funding) | rule OFF | every month | on-off Welch t |
+|---|---|---|---|---|
+| -1.5 | **+28.3 (t 2.80)** n=32 | -19.6 (t -1.03) | +9.4 (t 0.93) | **+2.23** |
+| **-1.0** | **+46.3 (t 3.01)** n=38 | -27.8 (t -1.22) | +17.6 (t 1.34) | **+2.69** |
+| -0.5 | +51.4 (t 2.56) n=38 | -8.1 (t -0.30) | +26.9 (t 1.58) | +1.75 |
+| 0 (straddle) | +88.7 (t 2.14) n=38 | +5.9 (t 0.10) | +66.4 (t 1.90) | +1.13 |
+
+BTC 30-day, one option short, 4-hour clock, 5 bps, bps of spot. At z = -1
+the rule-on net is +21% of premium sold against -20% when off; costs average
+15 bps. Predictions 1 and 2 pass at z = -1, 3 (same sign at -1.5 and -0.5)
+passes, 4 (ATM same direction, weaker) passes.
+
+Robustness, not part of the test:
+
+- **Hedging rule and cost.** At z = -1 the on/off gap holds in every one of
+  20 cells (5 rules x 4 slippages): rule-on +12 to +56, rule-off -9 to -44.
+  Rule-on t > 2 in 12 of 20.
+- **By era — the important caveat.** 2020-22: on **+86.3 (t 3.39)**, n=18,
+  off -33.3. 2023-26: on **+10.2 (t 0.71)**, n=20, off -25.9. The gap keeps
+  its sign in the modern era (+36 bps) but the rule-on months barely make
+  money. 12 of the 38 on-months are 2022, a year of low funding and a falling
+  market in which short puts that were hedged did well.
+- **Within year**, splitting each year at its own funding median: low funding
+  beats high in 5 of 7 years (loses in 2022 narrowly and in 2024).
+- **Dropping each year in turn**, rule-on mean stays +33 to +57.
+- **ETH**, the same rule on ETH's own funding: on +18.6 (t 0.77), off -18.5.
+  Same direction, not significant.
+
+What this says: funding is a genuine **filter** — over six years, every
+hedge rule and cost, and most years taken alone, the put wing sold when
+funding is high does worse than when it is low, which is the H7 mechanism
+showing up in money. But as a **trade** in 2023-26 it earns +10 bps a month on
+a 0.16-delta put, t 0.7: the filter avoids losses more than it finds profits.
+That is the same shape as everything else in this project — the premium
+was there in 2021-22 and is now about the size of costs — with one useful
+addition: when funding is high, don't be short the put wing.

@@ -195,3 +195,148 @@ class TestTailReport:
                           levels={"near": 79_000.0, "deep": 20_000.0})
         assert not out["levels"]["near"]["extrapolated"]
         assert out["levels"]["deep"]["extrapolated"]
+
+
+class TestDigitalCdf:
+    """
+    P(S_T <= K) from the smile's level and slope at K (`digital_cdf`).
+
+    The property that matters is the one the integrated `cdf` lacks: a level
+    inside the quoted range cannot be moved by anything outside it.
+    """
+
+    def test_flat_vol_is_exactly_the_lognormal_cdf(self):
+        from surface.density import digital_cdf
+
+        T, sigma = 0.25, 0.5
+        surface = flat(sigma, T)
+        w = sigma**2 * T
+        for price in (50_000.0, 80_000.0, 120_000.0):
+            k = np.log(price / FORWARD)
+            assert digital_cdf(surface, price, T) == pytest.approx(
+                norm.cdf((k + w / 2) / np.sqrt(w)), abs=1e-9)
+
+    def test_agrees_with_the_integrated_cdf_where_the_density_is_clean(self):
+        from surface.density import digital_cdf
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        for price in (60_000.0, 75_000.0, 80_000.0, 90_000.0, 100_000.0):
+            assert digital_cdf(surface, price, 0.25) == pytest.approx(
+                cdf(surface, price, 0.25), abs=2e-3)
+
+    def test_a_downside_skew_lowers_the_at_the_money_digital(self):
+        # rho < 0, so w rises to the left and w'(0) < 0. The correction
+        # phi(d2) w' / (2 sqrt w) is then negative: a tight put spread at the
+        # forward is cheaper than the flat-vol digital, because the vol on
+        # its lower strike is higher than on its upper one.
+        from surface.density import digital_cdf
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        w = float(surface.total_variance(0.0, 0.25))
+        flat_digital = norm.cdf(np.sqrt(w) / 2)
+        assert digital_cdf(surface, FORWARD, 0.25) < flat_digital
+
+    def test_moving_the_clamp_does_not_move_a_level_inside_both_ranges(self):
+        from surface.density import digital_cdf
+
+        narrow = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.15, 0.15)})
+        wide = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.40, 0.40)})
+        level = FORWARD * np.exp(-0.10)
+        assert digital_cdf(narrow, level, 0.25) == pytest.approx(
+            digital_cdf(wide, level, 0.25), abs=1e-9)
+        # The integrated cdf, by contrast, does move: the narrow surface's
+        # clamped wings change the mass it normalises by.
+        assert abs(cdf(narrow, level, 0.25) - cdf(wide, level, 0.25)) > 1e-4
+
+    def test_a_level_just_inside_the_edge_ignores_the_kink(self):
+        from surface.density import digital_cdf
+
+        clamped = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.15, 0.15)})
+        free = VolSurface({0.25: NEAR}, {0.25: FORWARD}, clamp_to_trust_radius=False)
+        level = FORWARD * np.exp(-0.1495)
+        assert digital_cdf(clamped, level, 0.25) == pytest.approx(
+            digital_cdf(free, level, 0.25), abs=2e-3)
+
+
+class TestLevels:
+    """The shared level helpers used by the dashboard and `rnd_monitor`."""
+
+    def test_step_is_a_round_tenth_of_the_forward_for_any_asset(self):
+        from surface.density import nice_step
+
+        assert nice_step(80_000.0) == 10_000
+        assert nice_step(1_835.0) == 200
+        assert nice_step(3.7) == 0.5
+
+    def test_no_level_is_zero_or_negative(self):
+        from surface.density import levels_around
+
+        for forward in (80_000.0, 1_835.0, 26.0, 0.9):
+            assert all(price > 0 for price in levels_around(forward).values())
+            # Six distinct labels: a label rounded coarser than the step would collide.
+            assert len([k for k in levels_around(forward) if k.startswith("above")]) == 3
+
+    def test_p_below_reads_the_smile_inside_and_flags_outside(self):
+        from surface.density import digital_cdf, p_below
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.30, 0.30)})
+        inside, flagged = p_below(surface, 75_000.0, 0.25)
+        assert not flagged
+        assert inside == digital_cdf(surface, 75_000.0, 0.25)
+        far, flagged = p_below(surface, 5_000.0, 0.25)
+        assert flagged
+        assert far == cdf(surface, 5_000.0, 0.25)
+
+
+def test_rnd_monitor_history_levels_bracket_the_forward_on_both_assets():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent.parent / "scripts" / "rnd_monitor.py"
+    spec = importlib.util.spec_from_file_location("rnd_monitor", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.history_levels(80_000.0) == (60_000.0, 100_000.0)
+    low, high = module.history_levels(1_835.0)
+    assert 0 < low < 1_835 < high
+
+
+class TestSmileQuantile:
+    """`smile_quantile`: the inverse of `digital_cdf`, inside the quoted range."""
+
+    def test_inverts_the_digital(self):
+        from surface.density import digital_cdf, smile_quantile
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.6, 0.6)})
+        for p in (0.05, 0.25, 0.5, 0.75, 0.95):
+            price, flagged = smile_quantile(surface, p, 0.25)
+            assert not flagged
+            assert digital_cdf(surface, price, 0.25) == pytest.approx(p, abs=1e-6)
+
+    def test_flat_vol_is_the_lognormal_quantile(self):
+        from surface.density import smile_quantile
+
+        T, sigma = 0.25, 0.5
+        surface = VolSurface({T: {"a": sigma**2 * T, "b": 0.0, "rho": 0.0, "m": 0.0, "sigma": 0.1}},
+                             {T: FORWARD}, {T: (-1.5, 1.5)})
+        w = sigma**2 * T
+        price, _ = smile_quantile(surface, 0.05, T)
+        assert np.log(price / FORWARD) == pytest.approx(-w / 2 + np.sqrt(w) * norm.ppf(0.05), abs=1e-5)
+
+    def test_a_quantile_beyond_the_quoted_range_falls_back_and_is_flagged(self):
+        from surface.density import smile_quantile
+
+        surface = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.05, 0.05)})
+        price, flagged = smile_quantile(surface, 0.05, 0.25)
+        assert flagged
+        assert price == pytest.approx(quantile(surface, 0.05, 0.25))
+
+    def test_moving_the_clamp_does_not_move_a_quantile_inside_both_ranges(self):
+        from surface.density import smile_quantile
+
+        narrow = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.5, 0.5)})
+        wide = VolSurface({0.25: NEAR}, {0.25: FORWARD}, {0.25: (-0.9, 0.9)})
+        a, fa = smile_quantile(narrow, 0.25, 0.25)
+        b, fb = smile_quantile(wide, 0.25, 0.25)
+        assert not fa and not fb
+        assert a == pytest.approx(b, rel=1e-6)

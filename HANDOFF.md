@@ -6,7 +6,11 @@ hedging-rule work landed (§12, §12.1, §12.2), and putting that rule on the
 live book turned up a marking bug that had been freezing its hedge (§10.5).
 Updated 2026-10-25 for the study of why the premium shrank (§10.6,
 `HYPOTHESES.md`), and 2026-11-14 for the two-month live-book rerun (§10.5)
-and the surface PCA (`SURFACE_PCA.md`).
+and the surface PCA (`SURFACE_PCA.md`). Updated 2026-11-15 for the
+dashboard, the funding mechanism (H7, H8), dispersion with real costs
+(`DISPERSION.md`), the smile-based density fix, inverse vs linear
+(`INVERSE_LINEAR.md`), the PCA rerun through the November sell-off, and the
+live-surface studies (`LIVE_STUDIES.md`).
 
 **The repository has a remote now**: `origin` is
 `github.com/aravgupta0707-gif/btc-vol-surface`, private, branch `master`. A
@@ -16,15 +20,19 @@ see §2 for what has to be moved separately.
 `BUILD_GUIDE.md` is the original brief. `PLAN.md` is the working plan with
 per-phase checkpoints. `VIOLATIONS.md` is the arbitrage log. `HYPOTHESES.md` is the pre-registered
 study of why the premium shrank, with its figures; `SURFACE_PCA.md` the same
-for how the live surface moves. This file is the
+for how the live surface moves; `DISPERSION.md`, `INVERSE_LINEAR.md` and
+`LIVE_STUDIES.md` the later pre-registered studies. `figures/overview/` is
+the whole project in seven charts (`scripts/make_overview.py`). This file is the
 state of play, what was learned, and what to do next.
 
 ---
 
 ## 1. State
 
-Every build-guide stage but the dashboard is complete. **430 tests, 51
-commits, 12,554 lines of Python, zero remaining stubs.**
+Every build-guide stage is complete, the dashboard last (2026-11-14).
+**505 tests, zero remaining stubs.** Line coverage (`pytest --cov`): the
+library (`pricing`, `surface`, `strategy`, `data/clean.py`, `dashboard`)
+92-100%; the study scripts lower, since much of them is report printing.
 
 | Stage | State | Checkpoint |
 |---|---|---|
@@ -39,11 +47,15 @@ commits, 12,554 lines of Python, zero remaining stubs.**
 | Write-up | **done** | `README.md`; detail in this file, §10 and §12 |
 | Why the premium shrank | **done** | `HYPOTHESES.md` — pre-registered, H0-H6 |
 | Surface factors | **done** | `SURFACE_PCA.md` — 3 factors, 96-97% of 12h changes |
-| Dashboard | **not started** | — |
+| Dashboard | **done** | `streamlit run dashboard/app.py` — `tests/test_dashboard.py`, 13 |
+| Funding mechanism | **done** | `HYPOTHESES.md` H7, H8 — leverage realises downside; put filter mostly 2021-22 |
+| Dispersion with costs | **done** | `DISPERSION.md` — real gross, costs eat it (straddles and variance swaps) |
+| Inverse vs linear | **done** | `INVERSE_LINEAR.md` — 0.13 vol pts in calm and stress alike |
+| PCA through the sell-off | **done** | `SURFACE_PCA.md` rerun — 97-98% out of sample |
+| Live-surface studies | **done** | `LIVE_STUDIES.md` — spot-vol rules, H7b out of sample, skew as forecast |
 
 The statistical claim that §5 used to call open is now answered, and the
-answer is mostly negative: see §10. The remaining build-guide gap is the
-dashboard.
+answer is mostly negative: see §10. No build-guide stage remains open.
 
 ### Running things
 
@@ -70,6 +82,12 @@ python scripts/vrp_hypotheses.py     # why the premium shrank (§10.6)  [~25 s]
 python scripts/make_figures.py premium  # its four figures, into figures/
 python scripts/surface_pca.py        # surface factors on Track A  [~5 min first run]
 python scripts/rnd_monitor.py        # risk-neutral density (--history)
+python scripts/dispersion.py         # ETH/BTC straddle dispersion with costs
+python scripts/varswap.py            # the same with replicated variance swaps
+python scripts/inverse_linear.py     # inverse vs linear books [~25 min first run]
+python scripts/live_studies.py       # LIVE_STUDIES.md (needs surface_pca first)
+python scripts/make_overview.py      # figures/overview/, the project in 7 charts
+streamlit run dashboard/app.py       # the dashboard
 
 # operations
 python scripts/collector.py status   # hourly snapshots
@@ -319,6 +337,17 @@ output is a refusal.
     (median 2, measured over 208). Past 500 it is refused, in 15 seconds,
     with a reason.
 
+15. **The two BTC books stay tied through a crash** (`INVERSE_LINEAR.md`,
+    pre-registered). Over 939 paired hours the inverse and linear books
+    agree to 0.13 vol points (median |diff|). BTC fell 87k -> 62k and
+    trailing realised vol peaked at 104%, and stress hours still showed 0.125.
+    The rv slope has t -0.05, and the per-quote 99th percentile is the same
+    0.96-0.97 in calm and stress. The put-side margin effect is there in
+    direction (-0.035 against -0.018) but t -0.84, about two hundredths of a
+    point. The 562 crossings have a $3 median depth and none survives
+    taker fees. The thin linear book quotes *tighter* in vol (0.78 against
+    1.06 points).
+
 ### Where I was wrong, caught by measurement
 
 Worth keeping because it is the honest half of the story.
@@ -388,7 +417,7 @@ does, and 70-90% of the in-sample level is reachable. The two
 results that survive being split by era are the BTC call wing and the
 ETH/BTC dispersion.
 
-**Track A is not contiguous.** ~68 days of hourly snapshots with sleep
+**Track A is not contiguous.** ~70 days of hourly snapshots with sleep
 gaps. Long holds and anything needing an unbroken path are limited by it:
 every 7- and 30-day live position had an 11-54h hedging gap (§10.5), and the
 surface PCA lost about half its possible 12h pairs (`SURFACE_PCA.md`).
@@ -403,14 +432,17 @@ hedging and cost logic; it is not a precision measurement.
 range it returns the boundary value. Honest, but it means far-wing queries
 are flat rather than smooth. A desk would fit a wing model instead.
 
-**The RND monitor's tail probabilities move with its own integration
-error.** Across 32 Track A surfaces, P(below 60k) correlates **+0.85** with
-the density's total mass, and removing that effect halves its hour-to-hour
-spread (sd 1.78 -> 0.93). The largest 4-hour jump, 5.3% -> 10.3%, happened
-with the forward moving 0.5% and ATM vol 0.2 points. A level inside the
-quoted strikes is still marked "not extrapolated" even though its
-probability integrates over the unquoted left wing. Also, the ETH report
-lists a "below 0" level and says "BTC" in a heading.
+**The RND monitor's deep tails are still an assumption.** The integration
+leak is fixed (§7 step 4): a level inside the quoted strikes is now read from
+the smile at that strike, so the wings cannot move it, and on 48 BTC surfaces
+its correlation with the density's total mass went from +0.29 to -0.06. A
+level *outside* the quoted strikes still comes from the integrated density
+over a clamped, lognormal wing, and is flagged "extrapolated" in both the
+monitor and the dashboard. Quantiles get the same treatment
+(`smile_quantile`, 2026-11-15): on the 48 surfaces the sd of the 95% point's
+changes fell from 1.23 to 0.49 points of log-moneyness, and the 5% point's
+from 2.68 to 1.91. But on 35% of those surfaces the 5% point lies beyond the
+quoted puts at 90 days, so it is still integrated and flagged.
 
 **The cleaner is blind to the short end, and it has bitten twice.** The
 quote filters key on *relative* spread, which scales with premium size, so
@@ -433,7 +465,12 @@ radius to refine a question this project does not need answered. Recorded as
 a limitation, with the live-book fix (§10.5) kept because there it was
 breaking a measurement rather than refining one.
 
-**`dashboard/app.py` is still the original stub.**
+**The dashboard reads cached study outputs, it does not rerun them.** The
+Backtest, Live book, History and Premium tabs show whatever
+`hedge_frequency.py`, `hold_to_expiry.py`, `surface_pca.py` and
+`vrp_hypotheses.py` last wrote to `data/research/`; rerun those to refresh
+them. Only the Surface and Density tabs fit live, from the chosen chain
+(about 5 s per snapshot, cached).
 
 ---
 
@@ -515,13 +552,25 @@ better artifact than a 1-day table would have been.
    hypothetical one, in §10.5. `VIOLATIONS.md`'s "Resolution" field, the
    question §9 says to prepare, was filled 2026-11-14.
 
-2. **Phase 7 — the dashboard.** `dashboard/app.py` is still the 14-line stub
-   and is the last unstarted build-guide stage. The `VolSurface` object
-   already serves everything it needs, and there is more worth showing than
-   when it was scoped: the RND monitor, the premium-across-the-smile surface,
-   and the rule comparison.
+2. **Phase 7 — the dashboard. Done 2026-11-14.** `streamlit run
+   dashboard/app.py`. Layout in `app.py`, every number in `dashboard/data.py`
+   (tested, and reusing `VolSurface`, `surface.density` and
+   `compute_metrics` rather than recomputing). Six tabs: surface + smile per
+   snapshot, implied density, Track A history, the §12 sweep as equity curve
+   / drawdown / cost waterfall / rule grid, the live book, the premium. Its
+   backtest tab reproduces §12's cell exactly (Sharpe 0.63, max DD −624 bps).
+   `VOL_DATA_ROOT` points it at another `data/` (e.g. from a worktree). It
+   also fixed the "below 0" level: levels now step by a round tenth of the
+   forward, shared with `scripts/rnd_monitor.py`.
 
-3. **The dispersion trade properly** — long ETH vol / short BTC vol,
+3. **Dispersion, done 2026-11-14 — `DISPERSION.md`, pre-registered, two
+   parts.** Straddles: gross +92.5 bps (t 1.90), costs 122 bps, net
+   negative, and the entry rule adds nothing on a hedged path. The profit is
+   the BTC short; long ETH vol loses on its own. Replicated variance swaps
+   (`scripts/varswap.py`): gross +4.6 vol pts (t 2.89), legs correlate 0.89,
+   but strip spreads and the futures hedge cost 4.7, so net is about 0. It
+   is positive only at maker-like costs or daily hedging, never with t > 2
+   robustly. The original scope follows. **The dispersion trade properly** — long ETH vol / short BTC vol,
    vega-neutral sizing rather than the approximation in §10, real spreads, and
    an entry rule on the spread's own history. Still the largest effect found
    (-6.14 vol points a month, t 4.6 conditional) and the least examined. Better
@@ -530,12 +579,30 @@ better artifact than a 1-day table would have been.
    Note the asymmetry §12.2 found — a rule validated on BTC did not transfer to
    ETH — before assuming anything crosses between the two.
 
-4. **Fix the RND tail** (§5): normalise the density over the quoted range, or
-   mark a level as extrapolated when its *integration domain* leaves the quoted
-   strikes rather than only when the level itself does. Also fix the ETH
-   report's "below 0" level and its "BTC" heading.
+4. **RND tail, fixed 2026-11-14.** `surface.density.digital_cdf` reads
+   P(S<K) from the smile's level and slope at K (Breeden-Litzenberger's first
+   derivative, `N(-d2) + phi(d2) w'/(2 sqrt w)`). No integration is involved,
+   so a level inside the quoted range cannot be moved by the wings.
+   `tail_report` now uses it for every level inside the range and keeps the
+   integrated CDF, flagged as extrapolated, outside it. On 48 BTC surfaces
+   across Track A (90 days, P<60k), the correlation with the density's total
+   mass went from +0.29 to -0.06, and the change between samples fell from
+   2.73 to 1.64 points (sd), with the same mean (7.9-8.0%). The dashboard's
+   levels step by a round tenth of the forward, which removes "below 0".
+   `rnd_monitor.py` now shares those helpers (`surface.density.levels_around`,
+   `p_below`), names the asset it reports on, and its `--history` levels are
+   two steps either side of the first forward (60k/100k on BTC, 2.2k/3k on
+   ETH) instead of hard-coded BTC prices.
 
-5. **Why high funding means a lower premium** (§10.6, H6). Two cheap tests on
+5. **Funding mechanism, done 2026-11-14 — `HYPOTHESES.md` H7, H8.** High
+   funding is followed by *downside* realised vol (difference t -3.3), while
+   the surface bids the *call* wing (skew slope t -5.2). Funding is not a
+   proxy for trailing realised. H8: sell the 30-day z=-1 put only when funding
+   is below its expanding median. That earns +46 bps (t 3.0) against -28 off
+   (difference t 2.7), and the gap holds across all 20 hedge/cost cells. But
+   in 2023-26 the on months make +10 (t 0.7), so it works as a filter, not as
+   a trade. The original scope follows. **Why high funding means a lower
+   premium** (§10.6, H6). Two cheap tests on
    data already on disk, both listed at the end of `HYPOTHESES.md`: split
    realised into up and down semivariance and see whether high-funding
    windows realise a lot of upside; and regress the z=-1 minus z=+1 skew on
@@ -546,8 +613,29 @@ better artifact than a 1-day table would have been.
    96-97% of 12h changes on both assets — level (5-7x larger at 7d than 90d),
    then skew, then a short-end term factor — identical across BTC and ETH.
    Rerun as Track A grows; half the possible pairs were lost to laptop
-   sleep. **Still runnable**: the inverse-vs-linear stress test (spin-off D)
-   on the USDC chains Track A has been banking.
+   sleep. **Rerun 2026-11-15 through the sell-off** (pre-registered, R1-R5
+   in `SURFACE_PCA.md`): loadings fitted before 5 Nov capture 97-98% of the
+   crash's 12h moves. BTC's level factor moved 5.5x its quiet variance, and
+   the level/spot correlation turned negative in the sell-off (-0.44,
+   -0.51). The BTC +0.32 was that regime. The factor model needs no refit
+   for stress.
+
+7. **Inverse vs linear, done 2026-11-15 — `INVERSE_LINEAR.md`,
+   pre-registered.** The two books do not come apart under stress (finding
+   15). Predictions 2 and 4 failed, and that failure is the finding. The
+   project's cross-book check now holds across 939 hours rather than on one
+   snapshot.
+
+8. **Live-surface studies, done 2026-11-15 — `LIVE_STUDIES.md`,
+   pre-registered, nine tests.** (A) BTC fixed-strike vol rises *with* spot
+   (+0.29 vol pts per 1%, t 2.85), while ETH is near sticky strike, so
+   ETH's level/spot correlation in `SURFACE_PCA.md` is mostly the grid
+   sliding along the smile. (B) H7b's funding → call-wing link replicates
+   on ETH (t -4.1) and not on BTC (t +0.6). (C) Skew predicts the downside
+   share of the next week's realised variance (ETH robust, BTC leans on the
+   sell-off). On BTC, a 12h rise in put skew precedes a lower 12h return
+   (t -4.1, and -2.1 before the sell-off). That was unpredicted: **re-test
+   C3 first as Track A grows.**
 
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive
@@ -648,7 +736,7 @@ it uses data already banked. Cheapest real project on the list.
 collateral costs that funding does not — so the interesting output is the
 *shape* of the disagreement, not a mispricing claim.
 
-### D. Inverse vs linear vol spread — ~1-2 days
+### D. Inverse vs linear vol spread — **BUILT** (`INVERSE_LINEAR.md`, finding 15)
 
 **Question:** the two BTC books agree to 0.124 vol points in calm
 conditions. Does that hold under stress?

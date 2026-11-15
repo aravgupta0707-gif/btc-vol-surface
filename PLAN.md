@@ -255,7 +255,8 @@ trusting any Sharpe number.
 
 ### Phase 7 — dashboard and write-up
 
-- [ ] Streamlit + plotly 3D surface, per-expiry smile, backtest P&L
+- [x] Streamlit + plotly 3D surface, per-expiry smile, backtest P&L —
+      `dashboard/app.py`, data layer in `dashboard/data.py`, 13 tests
 - [x] README: pipeline diagram, the violations log from Phase 4, final
       metrics with honest caveats, surface snapshots
 
@@ -264,7 +265,12 @@ trusting any Sharpe number.
 - [x] Why the premium shrank — `HYPOTHESES.md`, pre-registered, six
       hypotheses plus a fear-vs-leverage follow-up
 - [x] Live book held to expiry on two months of Track A — HANDOFF §10.5
-- [x] Surface factor structure — `SURFACE_PCA.md`, pre-registered
+- [x] Surface factor structure — `SURFACE_PCA.md`, pre-registered; rerun
+      out of sample through the November sell-off
+- [x] Funding mechanism — `HYPOTHESES.md` H7, H8
+- [x] Dispersion with real costs — `DISPERSION.md`, straddles and variance swaps
+- [x] Inverse vs linear books under stress — `INVERSE_LINEAR.md`
+- [x] Spot-vol rules, H7b out of sample, skew as a forecast — `LIVE_STUDIES.md`
 
 ---
 

@@ -124,6 +124,97 @@ def cdf(surface, price: float, T: float, width: float = 4.0,
     return float(np.interp(k_target, k, cumulative) / total)
 
 
+def digital_cdf(surface, price: float, T: float) -> float:
+    """
+    P(S_T <= price) from the smile *at* that strike -- no integration.
+
+    Breeden-Litzenberger's first derivative: the undiscounted put's slope in
+    strike is the probability of finishing below it. With total variance
+    w(k) the put is Black's, and differentiating through the smile gives
+
+        P(S_T <= K) = N(-d2) + phi(d2) * w'(k) / (2 sqrt(w))
+
+    i.e. the flat-vol digital plus a skew correction. This is the price of a
+    tight put spread, which is what the market actually quotes.
+
+    Why it exists alongside `cdf`: `cdf` integrates the density -- the
+    *second* derivative -- across the whole k grid and normalises by its
+    total. Any error anywhere on that grid leaks into every probability, and
+    the clamped wings and the kinks where they meet the fit are exactly where
+    the second derivative is worst. Across Track A that made P(below 60k)
+    correlate +0.85 with the density's total mass (HANDOFF §5). This one
+    reads only w and w' at k: inside a slice's quoted range, nothing outside
+    it can move the answer.
+
+    Uses a one-sided difference when a central one would straddle the edge of
+    the quoted range, so a strike just inside the edge does not pick up the
+    kink where the clamp begins.
+    """
+    from scipy.stats import norm
+
+    forward = surface.forward(T)
+    k = float(np.log(price / forward))
+    w = float(surface.total_variance(k, T))
+    if w <= 0:
+        return float("nan")
+    lo, hi = surface.is_extrapolated(price, T)["supported_k_range"]
+    if k + _H > hi and k - _H >= lo:
+        w1 = (w - float(surface.total_variance(k - _H, T))) / _H
+    elif k - _H < lo and k + _H <= hi:
+        w1 = (float(surface.total_variance(k + _H, T)) - w) / _H
+    else:
+        w1 = (float(surface.total_variance(k + _H, T))
+              - float(surface.total_variance(k - _H, T))) / (2 * _H)
+    sqrt_w = np.sqrt(w)
+    d2 = -k / sqrt_w - sqrt_w / 2
+    return float(np.clip(norm.cdf(-d2) + norm.pdf(d2) * w1 / (2 * sqrt_w), 0.0, 1.0))
+
+
+def p_below(surface, price: float, T: float) -> tuple[float, bool]:
+    """
+    P(S_T <= price) by the most trustworthy route, and whether it is
+    extrapolated.
+
+    Inside the quoted range the digital reads the smile at the level only, so
+    the wings cannot move it. Outside, there is no smile to read, so fall back
+    to the integrated density -- which is then lognormal by assumption -- and
+    say so.
+    """
+    info = surface.is_extrapolated(price, T)
+    extrapolated = bool(info["outside_supported_range"] or info["beyond_fitted_maturities"])
+    below = cdf(surface, price, T) if extrapolated else digital_cdf(surface, price, T)
+    return below, extrapolated
+
+
+def nice_step(forward: float) -> float:
+    """A round 1-2-5 step of about a tenth of the forward, so levels read like a market."""
+    raw = forward / 10.0
+    mag = 10.0 ** np.floor(np.log10(raw))
+    return float(min((m * mag for m in (1, 2, 5, 10)), key=lambda c: abs(np.log(c / raw))))
+
+
+def levels_around(forward: float) -> dict:
+    """
+    Three round levels either side of the forward, labelled "below X" /
+    "above X". The step scales with the forward, so an ETH chain cannot get
+    the "below 0" level a fixed 10k/1k step once gave it.
+    """
+    step = nice_step(forward)
+    base = round(forward / step) * step
+    # Enough decimals to tell neighbouring levels apart: none for a 10k step,
+    # one for a 0.5 step. Rounding coarser than the step collides the labels.
+    places = max(0, -int(np.floor(np.log10(step))))
+    out = {}
+    for n in (3, 2, 1):
+        level = round(base - n * step, places)
+        if level > 0:
+            out[f"below {level:,.{places}f}"] = level
+    for n in (1, 2, 3):
+        level = round(base + n * step, places)
+        out[f"above {level:,.{places}f}"] = level
+    return out
+
+
 def probability_between(surface, low: float, high: float, T: float,
                         **kwargs) -> float:
     """P(low < S_T <= high)."""
@@ -143,6 +234,40 @@ def quantile(surface, probability: float, T: float, width: float = 4.0,
     return float(surface.forward(T) * np.exp(
         np.interp(probability * total, cumulative, k)
     ))
+
+
+def smile_quantile(surface, probability: float, T: float,
+                   points: int = 201) -> tuple[float, bool]:
+    """
+    The price below which the market puts `probability`, read from the smile
+    where possible, and whether it had to be extrapolated.
+
+    `quantile` inverts the integrated density, so like the old tail levels it
+    moves with every error anywhere on the k grid -- above all the clamped
+    wings, which is exactly where a 5% or 95% point sits closest to. This
+    inverts `digital_cdf` instead, inside the slice's quoted range only:
+    nothing outside that range can move the answer. If the probability is
+    not reached inside the range, the quantile lies in a clamped wing, and it
+    falls back to `quantile` and says so.
+    """
+    if not 0.0 < probability < 1.0:
+        raise ValueError("probability must be strictly between 0 and 1")
+    from scipy.optimize import brentq
+
+    forward = surface.forward(T)
+    info = surface.is_extrapolated(forward, T)
+    if info["beyond_fitted_maturities"]:
+        return quantile(surface, probability, T), True
+    lo, hi = info["supported_k_range"]
+    k = np.linspace(lo, hi, points)
+    p = np.array([digital_cdf(surface, forward * np.exp(x), T) for x in k])
+    above = np.nonzero(p >= probability)[0]
+    if len(above) == 0 or above[0] == 0:
+        return quantile(surface, probability, T), True
+    i = above[0]
+    root = brentq(lambda x: digital_cdf(surface, forward * np.exp(x), T) - probability,
+                  k[i - 1], k[i], xtol=1e-7)
+    return float(forward * np.exp(root)), False
 
 
 def total_mass(surface, T: float, width: float = 4.0, points: int = 4001) -> float:
@@ -172,19 +297,22 @@ def tail_report(surface, T: float, levels: dict | None = None,
         "T": float(T),
         "forward": float(forward),
         "total_mass": total_mass(surface, T),
-        "quantiles": {q: quantile(surface, q, T) for q in quantiles},
+        "quantiles": {},
+        "quantiles_extrapolated": {},
         "levels": {},
     }
+    for q in quantiles:
+        price, extrapolated = smile_quantile(surface, q, T)
+        out["quantiles"][q] = price
+        out["quantiles_extrapolated"][q] = extrapolated
     for label, price in (levels or {}).items():
         info = surface.is_extrapolated(price, T)
-        below = cdf(surface, price, T)
+        below, extrapolated = p_below(surface, price, T)
         out["levels"][label] = {
             "price": float(price),
             "p_below": below,
             "p_above": 1.0 - below,
             "k": info["k"],
-            "extrapolated": bool(
-                info["outside_supported_range"] or info["beyond_fitted_maturities"]
-            ),
+            "extrapolated": extrapolated,
         }
     return out

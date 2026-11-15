@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("surface_pca", ROOT / "scripts" / "surface_pca.py")
@@ -47,3 +48,26 @@ def test_changes_never_span_a_missing_slot():
     dv, ret, ends = sp.changes_over(wide, spot, pd.Timedelta(hours=12))
     assert dv.tolist() == [[2.0]]                      # 08:00 -> 20:00 only
     assert abs(ret[0] - np.log(1.1)) < 1e-12
+
+
+class TestOutOfSampleShare:
+    """`oos_share`: how much of new changes fixed loadings capture."""
+
+    def test_changes_along_the_loading_are_fully_captured(self):
+        direction = np.array([1.0, 2.0, 2.0]) / 3.0
+        scores = np.array([-2.0, 0.5, 1.0, 3.0])
+        changes = np.outer(scores, direction)
+        assert sp.oos_share(changes, direction[:, None]) == pytest.approx(1.0)
+
+    def test_orthogonal_changes_are_not_captured(self):
+        loading = np.array([[1.0], [0.0], [0.0]])
+        changes = np.array([[0.0, 1.0, 0.0], [0.0, -1.0, 2.0], [0.0, 0.5, -1.0]])
+        assert sp.oos_share(changes, loading) == pytest.approx(0.0)
+
+    def test_a_full_basis_captures_everything_and_shares_add(self):
+        rng = np.random.default_rng(0)
+        changes = rng.normal(size=(20, 4))
+        basis = np.linalg.qr(rng.normal(size=(4, 4)))[0]
+        parts = [sp.oos_share(changes, basis[:, [k]]) for k in range(4)]
+        assert sum(parts) == pytest.approx(1.0)
+        assert sp.oos_share(changes, basis) == pytest.approx(1.0)

@@ -237,6 +237,78 @@ def analyse(grid: pd.DataFrame) -> dict:
     return out
 
 
+# The last slot of the original sample (SURFACE_PCA.md); everything after it
+# is the 2026-11 sell-off, which the original loadings never saw.
+CUTOFF = pd.Timestamp("2026-11-05 20:00", tz="UTC")
+
+
+def oos_share(new_changes: np.ndarray, loadings: np.ndarray) -> float:
+    """
+    Share of the new changes' demeaned sum of squares captured by projecting
+    onto fixed loadings (orthonormal columns) estimated elsewhere.
+    """
+    X = new_changes - new_changes.mean(axis=0)
+    total = float((X**2).sum())
+    if total == 0:
+        return float("nan")
+    captured = X @ loadings
+    return float((captured**2).sum() / total)
+
+
+def split_check(grid: pd.DataFrame, cutoff: pd.Timestamp = CUTOFF) -> dict:
+    """R1-R5 of the rerun: in-sample loadings judged on changes after `cutoff`."""
+    out = {}
+    print(f"\n{'=' * 78}\nRERUN: loadings fitted up to {cutoff:%Y-%m-%d %H:%M}, judged after it")
+    for asset in ("BTC", "ETH"):
+        wide, spot, _ = to_wide(grid, asset)
+        dv, ret, ends = changes_over(wide, spot, pd.Timedelta(hours=12))
+        ends = pd.DatetimeIndex(ends)
+        old, new = ends <= cutoff, ends > cutoff
+        if new.sum() < 3:
+            print(f"  {asset}: only {new.sum()} new changes, skipped")
+            continue
+        share_in, vec_in = pca(dv[old])
+        Xo = dv[old] - dv[old].mean(axis=0)
+        Xn = dv[new] - dv[new].mean(axis=0)
+        so, sn = Xo @ vec_in[:, :3], Xn @ vec_in[:, :3]
+        r = {
+            "n_old": int(old.sum()), "n_new": int(new.sum()),
+            "oos_pc1": oos_share(dv[new], vec_in[:, :1]),
+            "oos_pc13": oos_share(dv[new], vec_in[:, :3]),
+            "in_pc1": float(share_in[0]), "in_pc13": float(share_in[:3].sum()),
+            "var_ratio_pc1": float(sn[:, 0].var(ddof=1) / so[:, 0].var(ddof=1)),
+            "corr_new": [float(np.corrcoef(sn[:, k], ret[new])[0, 1]) for k in range(3)],
+            "corr_old": [float(np.corrcoef(so[:, k], ret[old])[0, 1]) for k in range(3)],
+        }
+        share_all, vec_all = pca(dv)
+        r.update(all_pc1=float(share_all[0]), all_pc13=float(share_all[:3].sum()),
+                 all_one_sign=bool((vec_all[:, 0] > 0).all() or (vec_all[:, 0] < 0).all()),
+                 cos_all_in=cosine(vec_all[:, 0], vec_in[:, 0]),
+                 cos_all_in_pc2=cosine(vec_all[:, 1], vec_in[:, 1]))
+        fresh_ret = ret[new]
+        idx = {c: i for i, c in enumerate(wide.columns)}
+        atm30 = wide[(30, 0.0)] if (30, 0.0) in idx else None
+        print(f"\n  {asset}: {r['n_old']} in-sample changes, {r['n_new']} new "
+              f"(new 12h spot returns: mean {fresh_ret.mean():+.2%}, sd {fresh_ret.std():.2%})")
+        if atm30 is not None:
+            print(f"    30d ATM: in-sample {atm30[atm30.index <= cutoff].min():.1f}-"
+                  f"{atm30[atm30.index <= cutoff].max():.1f}, new "
+                  f"{atm30[atm30.index > cutoff].min():.1f}-{atm30[atm30.index > cutoff].max():.1f}")
+        print(f"    R1 out-of-sample share: PC1 {r['oos_pc1']:.1%}, PC1-3 {r['oos_pc13']:.1%}"
+              f"   (in-sample PC1 {r['in_pc1']:.1%}, PC1-3 {r['in_pc13']:.1%})")
+        print(f"    R2 PC1 score variance, new / in-sample: {r['var_ratio_pc1']:.2f}x")
+        print(f"    R3/R4 corr(score, 12h spot return), new:       "
+              + "  ".join(f"PC{k + 1} {c:+.2f}" for k, c in enumerate(r["corr_new"]))
+              + f"   (~±{2 / np.sqrt(r['n_new']):.2f} is 2 s.e.)")
+        print(f"          same, in-sample:                         "
+              + "  ".join(f"PC{k + 1} {c:+.2f}" for k, c in enumerate(r["corr_old"])))
+        print(f"    R5 full sample: PC1 {r['all_pc1']:.1%} one sign {r['all_one_sign']}, "
+              f"PC1-3 {r['all_pc13']:.1%}, |cos| PC1 full vs in-sample {r['cos_all_in']:.2f}, "
+              f"PC2 {r['cos_all_in_pc2']:.2f}")
+        out[asset] = r
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     grid = fit_all(refit="--refit" in argv)
@@ -245,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{failed['slot'].nunique()} slots failed to fit: "
               f"{failed['error'].value_counts().head(3).to_dict()}")
     analyse(grid)
+    split_check(grid)
     return 0
 
 

@@ -128,7 +128,10 @@ and dropped, plus 30d z = -1.5 on ETH. Over the sample BTC 30d ATM sat at
   is a different strike after spot moves. Under a sticky-strike smile that
   alone moves the fixed-z vol with spot, so the spot correlations above mix
   the market's own response with re-indexing along a skewed smile. Fixed-
-  strike changes would separate the two; not done.
+  strike changes would separate the two. **Measured since, in
+  `LIVE_STUDIES.md` A:** for ETH it is most of the effect (fixed-strike
+  corr -0.08 against -0.24 at fixed z), while BTC fixed-strike vol
+  genuinely rises with spot (t 2.85).
 - **Some of the short end is fitting noise.** The 7d slice is fitted
   through few surviving quotes, and its 12h moves are the largest on the
   grid. PC1's steep fall with tenor is far too large to be noise alone (5x),
@@ -150,3 +153,111 @@ and dropped, plus 30d z = -1.5 on ETH. Over the sample BTC 30d ATM sat at
   main factor, so a vega-matched pair is close to factor-neutral.
 - **The next sample will be bigger for free**, and it needs a collector
   that does not sleep: half the possible 12h pairs were lost to gaps.
+
+---
+
+# Rerun through the sell-off, written before testing (2026-11-15)
+
+The first sample ended on 2026-11-05 at 20:00 UTC, one quiet regime. Since
+then BTC has fallen from about 76k to 64k, and ETH from about 2,450 to
+1,830. The 24h realised vol of BTC passed 100% (`INVERSE_LINEAR.md`). Every
+change after that cutoff is new data that the original loadings have never
+seen. So the first question is whether factors fitted on a quiet regime
+describe a crash. The second is whether the BTC level/spot sign, flagged
+above as "a property of these weeks", flips.
+
+**Setup, same as above:** same grid, same slots, same cached fits, and only
+the new snapshots get fitted. Call the original sample *in-sample* (slots up
+to 2026-11-05 20:00) and everything after it *new*.
+
+**Measure.** *Out-of-sample share* is the fraction of the new changes'
+demeaned sum of squares captured by projecting onto the in-sample top-3
+loadings. Since there are only about a dozen new 12h changes per asset,
+loadings are not refitted on the new period alone.
+
+**R1. The old factors describe the crash.** The out-of-sample share of
+in-sample PC1-3 is above 85% on both assets. The in-sample PC1 alone takes
+above 65%.
+
+**R2. The crash is mostly a level move.** On new changes, the variance of
+the PC1 score is at least 3× its in-sample variance: a far larger level
+move, not a different kind of move.
+
+**R3. In a sell-off, level moves against spot.** On the new changes, the
+in-sample PC1 score correlates negatively with the 12h spot return on both
+assets. That is the equity sign E6 expected, and it should show up once
+spot is falling hard.
+
+**R4. Skew keeps moving with spot.** The PC2 score still correlates
+positively with the 12h spot return on the new changes (both assets).
+
+**R5. The full sample keeps the structure.** Refitted on all changes, PC1
+is above 70% with one sign, PC1-3 is above 90%, and the cosine between the
+full and in-sample PC1 is above 0.9.
+
+**Known weakness.** About a dozen new changes per asset. Correlations on
+n ≈ 12 have a two-standard-error band of about ±0.6, so R3 and R4 can only
+fail loudly or pass weakly. R1 and R2 are about variance shares and are
+better determined.
+
+## Rerun results (2026-11-15)
+
+Run: `python scripts/surface_pca.py`. It fitted 32 new slots on top of the
+165 cached ones, and the R1-R5 block is printed last. The predictions above
+were committed in `6994cad` before `split_check` existed.
+
+**Sample.** There are 13 new 12h changes per asset. BTC's 12h returns over
+them average -1.04% (ETH -1.31%), and 30d ATM rose from 32-39 to 37-44 (ETH
+45-54 to 52-57). The in-sample cell set is now one cell smaller on BTC
+(90d z = -1.5 crossed the 10% extrapolation line once the new slots were
+added). That moves the in-sample shares by 0.1 point against the first
+run: 80.2% / 96.3%, against 80.1% / 96.2%.
+
+| | prediction | BTC | ETH | verdict |
+|---|---|---|---|---|
+| R1 | out-of-sample PC1-3 > 85%, PC1 > 65% | 98.4%, 87.5% | 97.4%, 88.6% | **holds**, and above the in-sample share on BTC |
+| R2 | PC1 score variance ≥ 3× in-sample | 5.47× | 2.39× | **BTC holds, ETH fails** |
+| R3 | PC1 against spot on new changes | -0.44 | -0.51 | **right sign on both**, inside 2 s.e. (±0.55) as warned |
+| R4 | PC2 with spot on new changes | +0.31 | +0.37 | **right sign on both**, weak |
+| R5 | full sample PC1 > 70% one sign, PC1-3 > 90%, cos > 0.9 | 86.3%, one sign, 97.7%, 0.98 | 89.0%, one sign, 97.6%, 1.00 | **holds** |
+
+### What it says
+
+- **A crash moves the surface along the same three directions as a quiet
+  month.** Loadings fitted before the sell-off capture 97-98% of the moves
+  during it. On BTC that is *more* than they capture in-sample. That is what
+  you'd expect if the crash was a large move along PC1: big level moves
+  swamp the fitting noise that fills the small components in a quiet
+  regime. The factor model does not need refitting for stress.
+- **The crash is a level move, and mostly at the short end.** BTC's PC1
+  score variance rose 5.5×. Across the full sample, the 12h sd of 7d ATM is
+  2.41 vol points against 0.46 at 90d. ETH's level moved only 2.4× its
+  in-sample variance, so R2 fails there. ETH's quiet regime already had
+  the larger level moves (PC1 89% in-sample), so the step up was smaller.
+- **The BTC +0.32 was the regime, as suspected.** In the sell-off, PC1
+  turned against spot on both assets (-0.44, -0.51). Over the full sample
+  the BTC correlation is now -0.02, against +0.32 on the quiet months alone,
+  and ETH's is -0.30, which is now significant. Vol rising with spot was a
+  property of September-October. Thirteen changes cannot pin down the
+  crash-period sign, but the full-sample shift is no longer noise for ETH.
+- **Skew still moves with spot**, at about the same strength (+0.31 and
+  +0.37 new, against +0.36 and +0.64 before). Full sample: +0.43 BTC, +0.52
+  ETH, both well beyond 2 s.e. It is the most stable spot-vol link in the
+  data.
+- **The structure is firmer, not just longer.** First and second halves now
+  agree at 0.93 / 0.86 / 0.86 (BTC) and 0.97 / 0.86 / 0.86 (ETH) for
+  PC1-3. Before, PC3 sat on the line at 0.70. BTC and ETH share PC1 at
+  0.99, PC2 at 0.97 and PC3 at 0.94.
+
+### Caveats
+
+- **Thirteen new changes from one episode.** R1 and R2 are variance shares
+  over 13 × 32 numbers and are reasonably determined. R3 and R4 are
+  correlations at n = 13 and are suggestive, not shown.
+- **The fixed-z grid caveat bites hardest here.** A 16% fall in spot moves
+  every z cell to a lower strike. On a put-skewed smile that alone raises
+  the fixed-z vol, so part of "level moves against spot" is re-indexing
+  along the smile, not the market repricing. Fixed-strike changes would
+  separate the two. Still not done.
+- **The figure is the first run's.** `figures/surface_pca.png` shows the
+  in-sample loadings and was left as published.
