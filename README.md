@@ -282,10 +282,11 @@ change already broke the trade once within the sample.
 | Why the premium shrank | done | `vrp_hypotheses.py` — six hypotheses, pre-registered |
 | Surface factors | done | `surface_pca.py` — 3 factors, 96-97% of 12h changes; 97-98% out of sample through the Nov sell-off |
 | Inverse vs linear | done | `inverse_linear.py` — books agree to 0.13 vol pts in calm and stress alike |
+| Live-surface studies | done | `live_studies.py` — BTC vol rises with spot, ETH sticky strike; skew forecasts downside share |
 | Write-up | **this file** | — |
 | Dashboard | done | `streamlit run dashboard/app.py` — six tabs, `tests/test_dashboard.py` |
 
-**496 tests.** `python -m pytest`
+**505 tests.** `python -m pytest`
 
 ## Running it
 

@@ -607,6 +607,17 @@ better artifact than a 1-day table would have been.
    project's cross-book check now holds across 939 hours rather than on one
    snapshot.
 
+8. **Live-surface studies, done 2026-11-15 — `LIVE_STUDIES.md`,
+   pre-registered, nine tests.** (A) BTC fixed-strike vol rises *with* spot
+   (+0.29 vol pts per 1%, t 2.85), while ETH is near sticky strike, so
+   ETH's level/spot correlation in `SURFACE_PCA.md` is mostly the grid
+   sliding along the smile. (B) H7b's funding → call-wing link replicates
+   on ETH (t -4.1) and not on BTC (t +0.6). (C) Skew predicts the downside
+   share of the next week's realised variance (ETH robust, BTC leans on the
+   sell-off). On BTC, a 12h rise in put skew precedes a lower 12h return
+   (t -4.1, and -2.1 before the sell-off). That was unpredicted: **re-test
+   C3 first as Track A grows.**
+
 **On models.** Not yet, and the constraint is observations rather than
 ambition: 44 inceptions in the modern era, one a month, and the free archive
 tier adds twelve a year. The one honest ML-adjacent test that has run came back
