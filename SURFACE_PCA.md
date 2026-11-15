@@ -150,3 +150,49 @@ and dropped, plus 30d z = -1.5 on ETH. Over the sample BTC 30d ATM sat at
   main factor, so a vega-matched pair is close to factor-neutral.
 - **The next sample will be bigger for free**, and it needs a collector
   that does not sleep: half the possible 12h pairs were lost to gaps.
+
+---
+
+# Rerun through the sell-off, written before testing (2026-11-15)
+
+The first sample ended on 2026-11-05 at 20:00 UTC, one quiet regime. Since
+then BTC has fallen from about 76k to 64k, and ETH from about 2,450 to
+1,830. The 24h realised vol of BTC passed 100% (`INVERSE_LINEAR.md`). Every
+change after that cutoff is new data that the original loadings have never
+seen. So the first question is whether factors fitted on a quiet regime
+describe a crash. The second is whether the BTC level/spot sign, flagged
+above as "a property of these weeks", flips.
+
+**Setup, same as above:** same grid, same slots, same cached fits, and only
+the new snapshots get fitted. Call the original sample *in-sample* (slots up
+to 2026-11-05 20:00) and everything after it *new*.
+
+**Measure.** *Out-of-sample share* is the fraction of the new changes'
+demeaned sum of squares captured by projecting onto the in-sample top-3
+loadings. Since there are only about a dozen new 12h changes per asset,
+loadings are not refitted on the new period alone.
+
+**R1. The old factors describe the crash.** The out-of-sample share of
+in-sample PC1-3 is above 85% on both assets. The in-sample PC1 alone takes
+above 65%.
+
+**R2. The crash is mostly a level move.** On new changes, the variance of
+the PC1 score is at least 3× its in-sample variance: a far larger level
+move, not a different kind of move.
+
+**R3. In a sell-off, level moves against spot.** On the new changes, the
+in-sample PC1 score correlates negatively with the 12h spot return on both
+assets. That is the equity sign E6 expected, and it should show up once
+spot is falling hard.
+
+**R4. Skew keeps moving with spot.** The PC2 score still correlates
+positively with the 12h spot return on the new changes (both assets).
+
+**R5. The full sample keeps the structure.** Refitted on all changes, PC1
+is above 70% with one sign, PC1-3 is above 90%, and the cosine between the
+full and in-sample PC1 is above 0.9.
+
+**Known weakness.** About a dozen new changes per asset. Correlations on
+n ≈ 12 have a two-standard-error band of about ±0.6, so R3 and R4 can only
+fail loudly or pass weakly. R1 and R2 are about variance shares and are
+better determined.
